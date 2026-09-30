@@ -50,6 +50,9 @@ const subscriptions = new WeakMap();
  */
 function effect(func) {
 	const run = () => {
+		if (run.disposed) return;
+		cleanup(run); // unpilesup last run's subsciptions
+
 		const previous = activeEffect; // remember who was active (effects can nest)
 		activeEffect = run;            // "ayyyyy im reading now" (we need this for nesting too)
 
@@ -59,7 +62,15 @@ function effect(func) {
 			activeEffect = previous; // func might throw but we still wanna restore
 		}
 	};
+
+	run.deps = new Set();     // sets of effects that have us
+	run.children = new Set(); // effects created while we were runninh
+	run.disposed = false;
+
+	if (activeEffect) activeEffect.children.add(run); // whoever's running owns us
+
 	run();
+	return () => dispose(run);
 }
 
 /**
@@ -87,6 +98,7 @@ function track(target, key) {
 	}
 
 	effects.add(activeEffect);
+	activeEffect.deps.add(effects); // the reverse link: "i'm in this set"
 }
 
 /**
@@ -549,4 +561,31 @@ function bindFor(template, spec, scope, locals) {
 			walk(row, scope, rowLocals);
 		});
 	});
+}
+
+/**
+ * unsubscribes an effect from everything, and disposes the effects it created
+ *
+ * gonna be called b4 every rerun & when the effect is disposed 5ever
+ *
+ * @param {Function} run
+ * @returns {void}
+ */
+function cleanup(run) {
+	run.children.forEach(dispose);
+	run.children.clear();
+
+	run.deps.forEach(effects => effects.delete(run));
+	run.deps.clear();
+}
+
+/**
+ * kill 5ever
+ *
+ * @param {Function} run
+ * @returns {void}
+ */
+function dispose(run) {
+	run.disposed = true;
+	cleanup(run);
 }

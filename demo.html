@@ -7,6 +7,7 @@
 	<title>stab.js demo</title>
 	<!-- my css, please check it out -->
 	<link rel="stylesheet" href="barkful.css" />
+	<script defer src="stab.js"> </script>
 	<style>
 		.row {
 			display: flex;
@@ -25,9 +26,7 @@
 <body>
 
 	<h1>stab.js demo</h1>
-	<p>directives: <code>@data</code>, <code>@show</code>, <code>p:&lt;property&gt;</code>,
-		<code>on:&lt;event&gt;</code>.
-	</p>
+	<p>see directives in <code>./README.md</code></p>
 
 	<!-- ==============================
 			this right here is the our demo
@@ -40,23 +39,29 @@
 			<button on:click="count = 0">reset</button>
 			<button on:click="open = !open">toggle message</button>
 		</div>
+
 		<p>count: <span p:text-content="count"></span></p>
 		<p>double: <span p:text-content="count * 2"></span></p>
+
 		<p p:class-name="count >= 3 ? 'hot' : ''">this turns bold and blue at 3 or more</p>
 		<p @show="open">try toggling this</p>
+
 		<button p:disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
 	</section>
 
 	<section @data="{ name: 'world', agreed: false }">
 		<h2>one more</h2>
+
 		<p>hello,
 			<span p:text-content="name || 'Earth'"></span>!<br />
 			you <span p:text-content="agreed ? 'agreed' : 'didnt agree'"></span>
 		</p>
+
 		<div class="row">
 			<input @model="name" placeholder="Name">
 			<button on:click="name = 'Visaginas'">set to Visaginas</button>
 		</div>
+
 		<label>
 			<input type="checkbox" @model="agreed"> agreed:
 			<span p:text-content="agreed"></span>
@@ -65,19 +70,23 @@
 
 	<section @data="{ log: 'nothing yet' }">
 		<h2>events and <code>$event</code></h2>
+
 		<div class="row">
 			<button on:click="log = $event.type + ' on ' + $event.target.tagName">click me</button>
 			<button on:mouseover="log = $event.type">hover me</button>
 		</div>
+
 		<p>last event: <span p:text-content="log"></span></p>
 	</section>
 
 	<section @data="{ todos: ['buy milk', 'do the stab.js thing', 'hi'], draft: '' }">
 		<h2>loops, with <code>@for</code></h2>
+
 		<div class="row">
 			<input @model="draft" placeholder="new todo">
 			<button p:disabled="!draft" on:click="todos.push(draft); draft = ''">add</button>
 		</div>
+
 		<ul>
 			<template @for="(todo, i) in todos">
 				<li>
@@ -86,11 +95,10 @@
 				</li>
 			</template>
 		</ul>
+
 		<i @show="todos.length === 0">crickets...</i>
 		<i><span p:text-content="todos.length"></span> tasks left</i>
 	</section>
-
-	<script src="stab.js"> </script>
 </body>
 
 </html>
