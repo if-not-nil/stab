@@ -190,6 +190,8 @@ function reactive(obj) {
 		},
 
 		/**
+		 * nop writes are skipped
+		 *
 		 * @param {T} target
 		 * @param {string | symbol} key
 		 * @param {any} value
@@ -197,8 +199,19 @@ function reactive(obj) {
 		 * @returns {boolean} whether the write succeeded
 		 */
 		set(target, key, value, receiver) {
+			const isNew = !Object.hasOwn(target, key);
+			const old = target[key];
+
 			const ok = Reflect.set(target, key, value, receiver);
-			trigger(target, key);
+
+			// Object.is instead of ===, so that NaN == NaN
+			if (isNew || !Object.is(old, value)) {
+				trigger(target, key);
+
+				// an array grew
+				// js changed `length` by itself, without a write wed see
+				if (isNew && Array.isArray(target)) trigger(target, 'length');
+			}
 			return ok;
 		},
 	});
@@ -245,10 +258,15 @@ function reactive(obj) {
  * @returns {any} the expression's value
  */
 function evaluate(expression, scope, locals = {}) {
-	return new Function(
-		'scope', 'locals',
-		`with (scope) { with (locals) { return (${expression}) } }`
-	)(scope, locals);
+	try {
+		return new Function(
+			'scope', 'locals',
+			`with (scope) { with (locals) { return (${expression}) } }`
+		)(scope, locals);
+	} catch (error) {
+		error.message += `\n  in expression: ${expression}`;
+		throw error;
+	}
 }
 
 /**
@@ -434,15 +452,87 @@ function walk(el, scope, locals = {}) {
  *	 makes the result reactive,
  *   walks element tree
  *
+ * does nathan if the element is already mounted
+ *
  * @param {HTMLElement} root - element with an `@data` attribute
  * @returns {void}
  */
 function mount(root) {
+	if (components.has(root)) return;
+
 	const data = evaluate(root.getAttribute('@data') || '{}', {});
-	walk(root, reactive(data));
+	const scope = reactive(data);
+
+	// every effect the walk creates becomes its child
+	//
+	// so disposing this one stops them all
+	// . it reads no state itself, so it never reruns
+	const stop = effect(() => walk(root, scope));
+
+	components.set(root, stop);
 }
 
-document.querySelectorAll('[\\@data]').forEach(mount);
+/**
+	* @param {Element} root
+	* @returns {void}
+	*/
+function unmount(root) {
+	components.get(root)?.();
+	components.delete(root);
+}
+
+const COMPONENT_SELECTOR = '[\\@data]';
+
+/**
+ * every mounted component root, with the function that stops it
+ *
+ * this stops us mounting twice, and lets us dispose on removal
+ *
+ * @type {Map<Element, () => void>}
+ */
+const components = new Map();
+
+/**
+ * @param {Node} node
+ * @param {(root: Element) => void} fn
+ * @returns {void}
+ */
+function forEachComponent(node, fn) {
+	if (node.nodeType !== Node.ELEMENT_NODE) return; // skip text and comments
+
+	if (node.matches(COMPONENT_SELECTOR)) fn(node);
+	node.querySelectorAll(COMPONENT_SELECTOR).forEach(fn);
+}
+
+/**
+ * watch the whole page for added or removed nodes
+ *
+ * the callback runs async, after the dom change is finished,
+ * so isConnected tells us where a node ended up:
+ *   - removed & moved elsewhere  => still connected, leave it alone
+ *   - added & then removed again => not connected, never mount it
+ */
+const observer = new MutationObserver(records => {
+	for (const record of records) {
+		record.removedNodes.forEach(node => {
+			if (!node.isConnected) forEachComponent(node, unmount);
+		});
+		record.addedNodes.forEach(node => {
+			if (node.isConnected) forEachComponent(node, mount);
+		});
+	}
+});
+
+function start() {
+	forEachComponent(document.documentElement, mount);
+	observer.observe(document.documentElement, { childList: true, subtree: true });
+}
+
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', start);
+} else {
+	start();
+}
 
 
 //
