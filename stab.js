@@ -273,10 +273,11 @@ function kebabToCamel(text) {
  * @param {string} prop - the dom property name, already camelCased
  * @param {string} expression - source text, like "count * 2"
  * @param {object} scope - yr reactive state
+ * @param {object} locals
  */
-function bindProperty(el, prop, expression, scope) {
+function bindProperty(el, prop, expression, scope, locals) {
 	effect(() => {
-		el[prop] = evaluate(expression, scope);
+		el[prop] = evaluate(expression, scope, locals);
 	});
 }
 
@@ -289,11 +290,12 @@ function bindProperty(el, prop, expression, scope) {
  * @param {string} eventName - any dom event: "click", "input", "keydown", etc.
  * @param {string} statements - source text like "count++"
  * @param {object} scope - yr reactive state
+ * @param {object} locals - `$event` is added on top
  * @returns {void}
  */
-function bindEvent(el, eventName, statements, scope) {
+function bindEvent(el, eventName, statements, scope, locals) {
 	el.addEventListener(eventName, event => {
-		execute(statements, scope, { $event: event }); // handler can use `$event`
+		execute(statements, scope, { ...locals, $event: event });
 	});
 }
 
@@ -308,11 +310,12 @@ function bindEvent(el, eventName, statements, scope) {
  * @param {HTMLElement} el
  * @param {string} expression
  * @param {object} scope
+ * @param {object} locals
  * @returns {void}
  */
-function bindShow(el, expression, scope) {
+function bindShow(el, expression, scope, locals) {
 	effect(() => {
-		el.style.display = evaluate(expression, scope) ? '' : 'none';
+		el.style.display = evaluate(expression, scope, locals) ? '' : 'none';
 	});
 }
 
@@ -328,9 +331,16 @@ function bindShow(el, expression, scope) {
  *
  * @param {HTMLElement} el - the element to process
  * @param {object} scope - yr shared reactive state
+ * @param {object} [locals] - tmp names from enclosing @for rows
  * @returns {void}
  */
-function walk(el, scope) {
+function walk(el, scope, locals = {}) {
+	// bindfor walks each row itself so we can let it take over
+	if (el.tagName === 'TEMPLATE' && el.hasAttribute('@for')) {
+		bindFor(el, el.getAttribute('@for'), scope, locals);
+		return;
+	}
+
 	// copy the attribute list first
 	// its live and we don't want to depend on it staying stable while we do our stuff
 	for (const { name, value } of [...el.attributes]) {
@@ -340,24 +350,24 @@ function walk(el, scope) {
 		const { kind, arg } = directive;
 
 		if (kind === 'prop') {
-			bindProperty(el, kebabToCamel(arg), value, scope);
+			bindProperty(el, kebabToCamel(arg), value, scope, locals);
 		} else if (kind === 'on') {
-			bindEvent(el, arg, value, scope);
+			bindEvent(el, arg, value, scope, locals);
 		} else if (kind === 'special' && arg === 'show') {
-			bindShow(el, value, scope);
+			bindShow(el, value, scope, locals);
 		} else if (kind === 'special' && arg === 'model') {
-			bindModel(el, value, scope);
+			bindModel(el, value, scope, locals);
 		}
 		// `@data` also goes here and is ignored on purpose
 		//   mount() reads it, the walker doesn't havw to
 	}
 
-	for (const child of el.children) {
+	for (const child of [...el.children]) {
 		// a nested @data is its own component
 		//
 		// it gets mounted separately with its own state
 		// so dont wire it up with ours
-		if (!child.hasAttribute('@data')) walk(child, scope);
+		if (!child.hasAttribute('@data')) walk(child, scope, locals);
 	}
 }
 /**
@@ -425,14 +435,14 @@ document.querySelectorAll('[\\@data]').forEach(mount);
  * @param {object} scope
  * @returns {void}
  */
-function bindModel(el, path, scope) {
+function bindModel(el, path, scope, locals) {
 	const isCheckbox = el.type === 'checkbox';
 	const prop = isCheckbox ? 'checked' : 'value';
 	const eventName = isCheckbox ? 'change' : 'input';
 
 	// state -> dom //
 	effect(() => {
-		const value = evaluate(path, scope) ?? ''; // avoid "undefined"
+		const value = evaluate(path, scope, locals) ?? ''; // avoid "undefined"
 		// skip the write if nothing changed
 		//
 		// assigning to `value` while the user is typing might possibly push the caret to the end of the field
@@ -441,6 +451,102 @@ function bindModel(el, path, scope) {
 
 	// dom -> state //
 	el.addEventListener(eventName, () => {
-		execute(`${path} = $value`, scope, { $value: el[prop] });
+		execute(`${path} = $value`, scope, { ...locals, $value: el[prop] });
+	});
+}
+
+//
+// do you feel something still missing in your life?
+// trivia: in most slavic languages, the @ symbol is called a "dog"
+//         . i have no idea whether it's true, but i'm happy to believe a lie like that
+//
+// maybe you need one more dog?
+//
+//   <ul>
+//     <template @for="todo in todos">
+//       <li p:text-content="todo"></li>
+//     </template>
+//   </ul>
+// 
+// awwwwwww
+// isn't she cute
+//
+// Q: what does it do?
+// A: per row, it'll copy the template's content, insert the clone
+//    , and walk it with locals = { todo: item }
+//	  . we only added that capability to `walk` this commit, so check out git blame for this line!
+//
+// Q: why <template>?
+// A: the browser doesn't render a template's contents
+//    it just holds them as markup we can copy, usually for webcomponents
+//
+// Q: when do we redo this?
+// A: this is all inside an effect, so reading `todos` subscribes it and this is rebuilt when its changed
+//
+
+/**
+ * @param {string} spec - "item in list" or "(item, index) in list"
+ * @returns {{ itemName: string, indexName: string | undefined, listExpr: string }}
+ * @throws {Error} if the text doesnr match either form
+ *
+ * @example
+ * parseFor('todo in todos');
+ * // => { itemName: 'todo', indexName: undefined, listExpr: 'todos' }
+ * parseFor('(todo, i) in todos');
+ * // => { itemName: 'todo', indexName: 'i', listExpr: 'todos' }
+ */
+function parseFor(spec) {
+	const match =
+		// i have absolutely no idea whether this is correct or anything my only assurance is regex101
+		spec.match(/^\s*\(?\s*(\w+)\s*(?:,\s*(\w+)\s*)?\)?\s+in\s+(.+)$/);
+
+	if (!match) throw new Error(`!!! bad @for value: "${spec}"`);
+
+	const [, itemName, indexName, listExpr] = match;
+	return { itemName, indexName, listExpr };
+}
+
+/**
+ * repeats a <template>'s content once per item in a list
+ *
+ * every time the list changes, all rows are removed & rebuilt
+ *
+ * inside each row, we have `itemName` (and maybe `indexName`) available to exprs via `locals`
+ *
+ * @param {HTMLTemplateElement} template
+ * @param {string} spec - attribute val, like `"todo in todos"`.
+ * @param {object} scope
+ * @param {object} locals
+ * @returns {void}
+ */
+function bindFor(template, spec, scope, locals) {
+	const { itemName, indexName, listExpr } = parseFor(spec);
+
+	/** rows currently like in the page, so that we can remove them next time; @type {Element[]} */
+	let rows = [];
+
+	effect(() => {
+		// toss previous rendering
+		rows.forEach(row => row.remove());
+		rows = [];
+
+		// reading the list thru proxy subscribes this effect to it:
+		// to `todos` itself (replacing the array)
+		// , and to its length and items (push, splice, ...)
+		const list = evaluate(listExpr, scope, locals);
+
+		list.forEach((item, index) => {
+			const row = template.content.firstElementChild.cloneNode(true);
+
+			// put just b4 the <template>, so rows come in the right order
+			template.before(row);
+			rows.push(row);
+
+			// this rows private names, outer locals are visible too
+			const rowLocals = { ...locals, [itemName]: item };
+			if (indexName) rowLocals[indexName] = index;
+
+			walk(row, scope, rowLocals);
+		});
 	});
 }

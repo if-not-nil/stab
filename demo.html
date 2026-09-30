@@ -34,7 +34,7 @@
      ================================ -->
 
 	<section @data="{ count: 0, open: true }">
-		<h2>counter, show/hide, property binding</h2>
+		<h2>the big ones</h2>
 		<div class="row">
 			<button on:click="count++">add</button>
 			<button on:click="count = 0">reset</button>
@@ -43,12 +43,12 @@
 		<p>count: <span p:text-content="count"></span></p>
 		<p>double: <span p:text-content="count * 2"></span></p>
 		<p p:class-name="count >= 3 ? 'hot' : ''">this turns bold and blue at 3 or more</p>
-		<p @show="open">this paragraph is controlled by <code>open</code>, try toggling message</p>
+		<p @show="open">try toggling this</p>
 		<button p:disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
 	</section>
 
 	<section @data="{ name: 'world', agreed: false }">
-		<h2>a second, independent component</h2>
+		<h2>one more</h2>
 		<p>hello,
 			<span p:text-content="name || 'Earth'"></span>!<br />
 			you <span p:text-content="agreed ? 'agreed' : 'didnt agree'"></span>
@@ -72,7 +72,23 @@
 		<p>last event: <span p:text-content="log"></span></p>
 	</section>
 
-	<!-- todo a @for example here -->
+	<section @data="{ todos: ['buy milk', 'do the stab.js thing', 'hi'], draft: '' }">
+		<h2>loops, with <code>@for</code></h2>
+		<div class="row">
+			<input @model="draft" placeholder="new todo">
+			<button p:disabled="!draft" on:click="todos.push(draft); draft = ''">add</button>
+		</div>
+		<ul>
+			<template @for="(todo, i) in todos">
+				<li>
+					<span p:text-content="(i + 1) + '. ' + todo"></span>
+					<button on:click="todos.splice(i, 1)">i dont wanna</button>
+				</li>
+			</template>
+		</ul>
+		<i @show="todos.length === 0">crickets...</i>
+		<i><span p:text-content="todos.length"></span> tasks left</i>
+	</section>
 
 	<script src="stab.js"> </script>
 </body>
