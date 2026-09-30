@@ -102,6 +102,54 @@ function track(target, key) {
 }
 
 /**
+ * effects waiting to rerun
+ *
+ * a `Set` so that an effect that's triggered ten times still runs once
+ *
+ * @type {Set<Function>}
+ */
+const queue = new Set();
+
+/** true while a flush is already scheduled, so we only schedule one @type {boolean} */
+let flushScheduled = false;
+
+/**
+ * add effect to queue, schedule a flush if one isnt already pending yet already
+ *
+ * @param {Function} run - an effect's run function
+ * @returns {void}
+ */
+function schedule(run) {
+	queue.add(run);
+	if (flushScheduled) return;
+
+	flushScheduled = true;
+	queueMicrotask(flush);
+}
+
+/**
+ * runs every queued effect once
+ *
+ * effects can queue more effects while running
+ * so we loop until the queue is empty instead of looping over a snapshot
+ *
+ * @returns {void}
+ */
+function flush() {
+	while (queue.size) {
+		const [run] = queue; // no idea how else to pop first
+		queue.delete(run);
+		try {
+			run();
+		} catch (error) {
+			// we dont care, one broken effect cant break others
+			console.error(error);
+		}
+	}
+	flushScheduled = false;
+}
+
+/**
  * call on every property write
  * reruns everything that read thw property
  *
@@ -113,9 +161,7 @@ function trigger(target, key) {
 	const effects = subscriptions.get(target)?.get(key);
 	if (!effects) return;
 
-	// re running an effect resubs it
-	//   and mutationg a Set while looping over it can loop 5ever
-	[...effects].forEach(run => run());
+	effects.forEach(schedule);
 }
 
 /**
@@ -589,3 +635,5 @@ function dispose(run) {
 	run.disposed = true;
 	cleanup(run);
 }
+
+// if you're reading the code chronologically, i added batching this commit
