@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>stab.js demo</title>
+	<!-- my css, please check it out -->
+	<link rel="stylesheet" href="barkful.css" />
+	<style>
+		.row {
+			display: flex;
+			gap: .5rem;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+
+		.hot {
+			color: var(--base0D);
+			font-weight: 600;
+		}
+	</style>
+</head>
+
+<body>
+
+	<h1>stab.js demo</h1>
+	<p>directives: <code>@data</code>, <code>@show</code>, <code>p:&lt;property&gt;</code>,
+		<code>on:&lt;event&gt;</code>.
+	</p>
+
+	<!-- ==============================
+			this right here is the our demo
+     ================================ -->
+
+	<section @data="{ count: 0, open: true }">
+		<h2>counter, show/hide, property binding</h2>
+		<div class="row">
+			<button on:click="count++">add</button>
+			<button on:click="count = 0">reset</button>
+			<button on:click="open = !open">toggle message</button>
+		</div>
+		<p>count: <span p:text-content="count"></span></p>
+		<p>double: <span p:text-content="count * 2"></span></p>
+		<p p:class-name="count >= 3 ? 'hot' : ''">this turns bold and blue at 3 or more</p>
+		<p @show="open">this paragraph is controlled by <code>open</code>, try toggling message</p>
+		<button p:disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
+	</section>
+
+	<section @data="{ name: 'world' }">
+		<h2>a second, independent component</h2>
+		<p>hello, <span p:text-content="name"></span>!</p>
+		<div class="row">
+			<input p:value="name" on:input="name = $event.target.value">
+			<button on:click="name = 'Visaginas'">set to Visaginas</button>
+		</div>
+	</section>
+
+	<section @data="{ log: 'nothing yet' }">
+		<h2>events and <code>$event</code></h2>
+		<div class="row">
+			<button on:click="log = $event.type + ' on ' + $event.target.tagName">click me</button>
+			<button on:mouseover="log = $event.type">hover me</button>
+		</div>
+		<p>last event: <span p:text-content="log"></span></p>
+	</section>
+
+	<!-- todo a @for example here -->
+
+	<script src="stab.js"> </script>
+</body>
+
+</html>
