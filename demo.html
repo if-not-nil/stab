@@ -47,13 +47,20 @@
 		<button p:disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
 	</section>
 
-	<section @data="{ name: 'world' }">
+	<section @data="{ name: 'world', agreed: false }">
 		<h2>a second, independent component</h2>
-		<p>hello, <span p:text-content="name"></span>!</p>
+		<p>hello,
+			<span p:text-content="name || 'Earth'"></span>!<br />
+			you <span p:text-content="agreed ? 'agreed' : 'didnt agree'"></span>
+		</p>
 		<div class="row">
-			<input p:value="name" on:input="name = $event.target.value">
+			<input @model="name" placeholder="Name">
 			<button on:click="name = 'Visaginas'">set to Visaginas</button>
 		</div>
+		<label>
+			<input type="checkbox" @model="agreed"> agreed:
+			<span p:text-content="agreed"></span>
+		</label>
 	</section>
 
 	<section @data="{ log: 'nothing yet' }">

@@ -345,6 +345,8 @@ function walk(el, scope) {
 			bindEvent(el, arg, value, scope);
 		} else if (kind === 'special' && arg === 'show') {
 			bindShow(el, value, scope);
+		} else if (kind === 'special' && arg === 'model') {
+			bindModel(el, value, scope);
 		}
 		// `@data` also goes here and is ignored on purpose
 		//   mount() reads it, the walker doesn't havw to
@@ -368,8 +370,77 @@ function walk(el, scope) {
  * @returns {void}
  */
 function mount(root) {
-  const data = evaluate(root.getAttribute('@data') || '{}', {});
-  walk(root, reactive(data));
+	const data = evaluate(root.getAttribute('@data') || '{}', {});
+	walk(root, reactive(data));
 }
 
 document.querySelectorAll('[\\@data]').forEach(mount);
+
+
+//
+// ok ok this is big
+//
+// what we just did above gave us a real framework with real reactivity
+// we have EVERYTHING we need, basically (sans the `@for`-shaped elemant in the room)
+// 
+// but its not the best to work with
+// . we want some more functionality, some more abstractions
+//
+// which we'll first do with @model:
+//
+//   <input p:value="name" on:input="name = $event.target.value">
+//
+// see this?
+// ~ p:value pushes state to dom
+// ~ on:input pushes dom to state
+//
+// it doesn't have to be like this
+// . we just want to be able to write this instead
+//
+//   <input @model="name">
+//
+// yes, i know, it's magic, but magic often-used enough to be justified
+// 
+
+/**
+ * two-way binds a form control to a state path
+ *
+ * checkboxes use `checked` (a boolean) and the `change` event
+ * everything else uses `value` (a string) and the `input` event
+ *
+ * ```html
+ * <p>HELL, <span p:text-content="name"></span>!</p>
+ * <div class="row">
+ * 	<input @model="name" placeholder="Name">
+ * 	<button on:click="name = 'Zadupie'">set to Zadupie</button>
+ * </div>
+ * ```
+ *
+ * TODO: number inputs to come back as numbers
+ * TODO: radio buttons, multiselects
+ * TODO: `@model="a + b"` throws, but it also throws in alpine so idk
+ *
+ * @param {HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement} el
+ * @param {string} path - something assignable, like "name" or "user.name"
+ * @param {object} scope
+ * @returns {void}
+ */
+function bindModel(el, path, scope) {
+	const isCheckbox = el.type === 'checkbox';
+	const prop = isCheckbox ? 'checked' : 'value';
+	const eventName = isCheckbox ? 'change' : 'input';
+
+	// state -> dom //
+	effect(() => {
+		const value = evaluate(path, scope) ?? ''; // avoid "undefined"
+		// skip the write if nothing changed
+		//
+		// assigning to `value` while the user is typing might possibly push the caret to the end of the field
+		if (el[prop] !== value) el[prop] = value;
+	});
+
+	// dom -> state //
+	el.addEventListener(eventName, () => {
+		execute(`${path} = $value`, scope, { $value: el[prop] });
+	});
+}
