@@ -49,6 +49,7 @@
 		<button :disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
 	</section>
 
+
 	<section @data="{ name: 'world', agreed: false }">
 		<h1>one more</h1>
 
@@ -68,6 +69,7 @@
 		</label>
 	</section>
 
+
 	<section @data="{ log: 'nothing yet' }">
 		<h1>events and <code>$event</code></h1>
 
@@ -78,6 +80,7 @@
 
 		<p>last event: <span :text-content="log"></span></p>
 	</section>
+
 
 	<section @data="{ todos: ['buy milk', 'do the stab.js thing', 'hi'], draft: '' }">
 		<h1>loops, with <code>@for</code></h1>
@@ -99,6 +102,29 @@
 		<i @show="todos.length === 0">crickets...</i>
 		<i><span :text-content="todos.length"></span> tasks left</i>
 	</section>
+
+
+	<section @data="{ editing: false, open: false, query: '', changes: 0, got: '' }"
+		@init="$watch('query', () => changes++)" on:saved="got = 'saved #' + $event.detail">
+		<h1><code>@init</code> and <code>@ref</code></h1>
+
+		<button on:click="editing = true; $nextTick(() => $refs.box.focus())">edit</button>
+		<input @ref="box" @show="editing" on:blur="editing = false">
+
+		<div on:click.window="if (!$el.contains($event.target)) open = false">
+			<button on:click="open = !open">menu</button>
+			<ul @show="open">
+				<li>one</li>
+				<li>two</li>
+			</ul>
+		</div>
+
+		<input @model="query"> changes: <span :text-content="changes"></span>
+
+		<button on:click="$dispatch('saved', 42)">save</button>
+		<span :text-content="got"></span>
+	</section>
+
 
 	<section @data="{ clicks: 0, outer: '', key: 'none yet', keys: [], keypresses: 0, once: 0 }">
 		<h2>event modifiers</h2>

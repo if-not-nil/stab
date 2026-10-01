@@ -32,6 +32,24 @@
  */
 let activeEffect = null;
 
+/** false while code runs that shouldnt subscribe the running effect @type {boolean} */
+let tracking = true;
+
+/** resolve functions waiting for the next flush to finish @type {Function[]} */
+let tickWaiters = [];
+
+/**
+ * effects waiting to rerun
+ *
+ * a `Set` so that an effect that's triggered ten times still runs once
+ *
+ * @type {Set<Function>}
+ */
+const queue = new Set();
+
+/** true while a flush is already scheduled, so we only schedule one @type {boolean} */
+let flushScheduled = false;
+
 /**
  * for each reactive object, for each property name, the set of effects that read that property
  *
@@ -54,14 +72,17 @@ function effect(func) {
 		cleanup(run); // unpilesup last run's subsciptions
 
 		const previous = activeEffect; // remember who was active (effects can nest)
+		const previousTracking = tracking;
 		activeEffect = run;            // "ayyyyy im reading now" (we need this for nesting too)
+		tracking = true;
 
 		try {
 			func();
 		} catch (error) {
-			console.error(error);
+			console.error('stab: effect failed', error);
 		} finally {
 			activeEffect = previous; // func might throw but we still wanna restore
+			tracking = previousTracking;
 		}
 	};
 
@@ -86,7 +107,7 @@ function effect(func) {
  * @returns {void}
  */
 function track(target, key) {
-	if (!activeEffect) return; // read happened outside an effect!!!!
+	if (!activeEffect || !tracking) return; // read happened outside an effect!!!!
 
 	let byKey = subscriptions.get(target);
 	if (!byKey) {
@@ -105,16 +126,18 @@ function track(target, key) {
 }
 
 /**
- * effects waiting to rerun
+ * runs fn without subscribing the running effect to anything fn reads
  *
- * a `Set` so that an effect that's triggered ten times still runs once
- *
- * @type {Set<Function>}
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
  */
-const queue = new Set();
+function untracked(fn) {
+	const previous = tracking;
+	tracking = false;
 
-/** true while a flush is already scheduled, so we only schedule one @type {boolean} */
-let flushScheduled = false;
+	try { return fn() } finally { tracking = previous }
+}
 
 /**
  * add effect to queue, schedule a flush if one isnt already pending yet already
@@ -128,6 +151,74 @@ function schedule(run) {
 
 	flushScheduled = true;
 	queueMicrotask(flush);
+}
+
+/**
+ * waits until queued effects have run
+ * so that th dom represents latest writes
+ *
+ * works as a promise (await nextTick()) or with a callback (like nextTick(fn))
+ *
+ * @param {() => void} [callback]
+ * @returns {Promise<void>}
+ */
+function nextTick(callback) {
+	const promise = new Promise(resolve => tickWaiters.push(resolve));
+
+	// nothing queued means no flush is coming, so make one
+	if (!flushScheduled) {
+		flushScheduled = true;
+		queueMicrotask(flush);
+	}
+	return callback ? promise.then(callback) : promise;
+}
+
+/**
+ * calls callback(newValue, oldValue) whenever getter's result changes
+ *
+ * doesnt fire for the first value, only for changes
+ *
+ * @template T
+ * @param {() => T} getter - reads some state, returns what to watch
+ * @param {(value: T, previous: T) => void} callback
+ * @returns {() => void} stops watcher
+ */
+function watch(getter, callback) {
+	let old;
+	let first = true;
+
+	return effect(() => {
+		const value = getter(); // tracked!!!! this is what subscribes us
+		const previous = old;
+		const changed = !first && !Object.is(value, previous);
+
+		first = false;
+		old = value;
+
+		// untracked..... the callback cant subscribe or retrigger the watcher
+		if (changed) untracked(() => callback(value, previous));
+	});
+}
+
+/**
+ * makes an element reachable as $refs.name
+ *
+ * dropped when the effect that built this part of the page reruns or dies
+ *   (a @for row being rebuilt, a component being removed)
+ *
+ * @param {HTMLElement} el
+ * @param {string} name - plain name not an expr
+ * @param {object} locals - must contain $refs
+ * @returns {void}
+ */
+function bindRef(el, name, locals) {
+	const refs = locals.$refs;
+	refs[name] = el;
+
+	onCleanup(() => {
+		// a later element coulda taken the name
+		if (refs[name] === el) delete refs[name];
+	});
 }
 
 /**
@@ -146,10 +237,14 @@ function flush() {
 			run();
 		} catch (error) {
 			// we dont care, one broken effect cant break others
-			console.error(error);
+			console.error('stab: flush failed', error);
 		}
 	}
 	flushScheduled = false;
+
+	const waiters = tickWaiters;
+	tickWaiters = [];
+	waiters.forEach(resolve => resolve());
 }
 
 /**
@@ -550,8 +645,14 @@ function walk(el, scope, locals = {}) {
 		return;
 	}
 
-	// copy the attribute list first
-	// its live and we don't want to depend on it staying stable while we do our stuff
+	// names for directives only on THIS one only
+	const here = {
+		...locals,
+		$el: el,
+		$dispatch: (name, detail) =>
+			el.dispatchEvent(new CustomEvent(name, { detail, bubbles: true })),
+	};
+
 	for (const { name, value } of [...el.attributes]) {
 		const directive = parseAttribute(name);
 		if (!directive) continue; // normal attribute like class="..."
@@ -559,23 +660,27 @@ function walk(el, scope, locals = {}) {
 		const { kind, arg } = directive;
 
 		if (kind === 'prop') {
-			bindProperty(el, kebabToCamel(arg), value, scope, locals);
+			bindProperty(el, kebabToCamel(arg), value, scope, here);
 		} else if (kind === 'on') {
-			bindEvent(el, arg, value, scope, locals);
+			bindEvent(el, arg, value, scope, here);
 		} else if (kind === 'special' && arg === 'show') {
-			bindShow(el, value, scope, locals);
+			bindShow(el, value, scope, here);
 		} else if (kind === 'special' && arg === 'model') {
-			bindModel(el, value, scope, locals);
+			bindModel(el, value, scope, here);
+		} else if (kind === 'special' && arg === 'ref') {
+			bindRef(el, value, here);
+		} else if (kind === 'special' && arg === 'init') {
+			untracked(() => {
+				try {
+					execute(value, scope, here);
+				} catch (error) {
+					console.error("stab: broken init", error);
+				}
+			});
 		}
-		// `@data` also goes here and is ignored on purpose
-		//   mount() reads it, the walker doesn't havw to
 	}
 
 	for (const child of [...el.children]) {
-		// a nested @data is its own component
-		//
-		// it gets mounted separately with its own state
-		// so dont wire it up with ours
 		if (!child.hasAttribute('@data')) walk(child, scope, locals);
 	}
 }
@@ -634,16 +739,31 @@ function parseEvent(arg) {
 function mount(root) {
 	if (components.has(root)) return;
 
-	const data = evaluate(root.getAttribute('@data') || '{}', {});
-	const scope = reactive(data);
+	try {
+		const data = evaluate(root.getAttribute('@data') || '{}', {});
+		const scope = reactive(data);
 
-	// every effect the walk creates becomes its child
-	//
-	// so disposing this one stops them all
-	// . it reads no state itself, so it never reruns
-	const stop = effect(() => walk(root, scope));
+		// what every directive in this component can do
+		const magics = {
+			$refs: {},
+			$nextTick: nextTick,
+			// source,,, a string ("query") or a function (() => todo.done)
+			$watch: (source, callback) =>
+				watch(
+					typeof source === 'function'
+						? source
+						: () => evaluate(source, scope),
 
-	components.set(root, stop);
+					callback
+				),
+		};
+
+		const stop = effect(() => walk(root, scope, magics));
+		components.set(root, stop);
+	} catch (error) {
+		// we gont car about one error
+		console.error('stab: failed to mount', root, error);
+	}
 }
 
 /**
