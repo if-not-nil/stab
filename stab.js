@@ -293,7 +293,7 @@ function reactive(obj) {
  *
  * this is the part where we make it evaluate expressions
  * we get:
- *   <button $click="count++">
+ *   <button on:click="count++">
  *   <span p:text="count">
  *
  * html gives us strings. but if you look at these strings, count it there, but not anywhere in the js!
@@ -322,7 +322,7 @@ function reactive(obj) {
  * @returns {void}
  */
 function annotate(error, source) {
-	if (error instanceof Error) error.message += `\n  in expressi$ ${source}`;
+	if (error instanceof Error) error.message += `\n  in expression: ${source}`;
 }
 
 /**
@@ -377,7 +377,7 @@ function execute(statements, scope, locals = {}) {
  *     add() { this.todos.push('x') },
  *     get total() { return this.todos.length },
  *   }">
- *     <button $click="add()">add</button>
+ *     <button on:click="add()">add</button>
  *     <span p:text-content="total"></span>
  *   </div>
  *
@@ -390,10 +390,10 @@ function execute(statements, scope, locals = {}) {
  * again, this is what we're targetting:
  *
  *   <div @data="{ count: 0, open: true }">
- *     <button $click="count++">Add</button>
+ *     <button on:click="count++">Add</button>
  *     <span p:textContent="count"></span>
  *     <p @show="open">Hello</p>
- *     <button p:disabled="count >= 3" $click="open = !open">Toggle</button>
+ *     <button p:disabled="count >= 3" on:click="open = !open">Toggle</button>
  *   </div>
  *
  */
@@ -401,20 +401,20 @@ function execute(statements, scope, locals = {}) {
 
 /** @type {Record<string, 'prop' | 'on' | 'special'>} */
 const PREFIXES = {
-	':': 'prop',    // :textContent -> set a dom property
-	'$': 'on',      // $click      -> add an event listener
-	'@': 'special', // @show         -> built-in directives
+	'p:': 'prop',      // p:textContent -> set a dom property
+	'on:': 'on',       // on:click      -> add an event listener
+	'@': 'special',    // @show         -> built-in directives
 };
 
 /**
  * splits an attribute name into a directive kind and its argument
  *
- * @param {string} name - an attribute name such as "$click"
+ * @param {string} name - an attribute name such as "on:click"
  * @returns {{ kind: 'prop' | 'on' | 'special', arg: string } | null}
  *   `null` if the attribute is not a directive (e.g. `class`, `id`)
  *
  * @example
- * parseAttribute('$click');  // { kind: 'on', arg: 'click' }
+ * parseAttribute('on:click');  // { kind: 'on', arg: 'click' }
  * parseAttribute('class');     // null
  */
 function parseAttribute(name) {
@@ -456,7 +456,7 @@ function bindProperty(el, prop, expression, scope, locals) {
 	});
 }
 
-// $<event> is not an effect, bc it doesn't read state when set up
+// on:<event> is not an effect, bc it doesn't read state when set up
 // it only runs when the event is fired, so its just a listener
 
 /**
@@ -464,7 +464,7 @@ function bindProperty(el, prop, expression, scope, locals) {
  * see EVENT_MODIFIERS for their list and descriptions
  *
  * @param {HTMLElement} el
- * @param {string} arg - everything after `$`
+ * @param {string} arg - everything after `on:`
  * @param {string} statements - source text like "count++"
  * @param {object} scope - yr reactive state
  * @param {object} locals - `$event` is added on top
@@ -475,7 +475,7 @@ function bindEvent(el, arg, statements, scope, locals) {
 
 	// better to bind nothing than something thats kinda wrong
 	if (unknown.length) {
-		console.error(`stab: unknown event modifier(s) ${unknown.map(m => '.' + m).join(', ')} on $${arg}`, el);
+		console.error(`stab: unknown event modifier(s) ${unknown.map(m => '.' + m).join(', ')} on on:${arg}`, el);
 		return;
 	}
 
@@ -591,7 +591,7 @@ const COMPONENT_SELECTOR = '[\\@data]';
  */
 const components = new Map();
 
-/** the modifiers `$` understands */
+/** the modifiers `on:` understands */
 const EVENT_MODIFIERS = new Set([
 	'prevent',  // calls event.preventDefault()
 	'stop',     // calls event.stopPropagation()
@@ -603,7 +603,7 @@ const EVENT_MODIFIERS = new Set([
 	'document', // listens on document instead of the element
 ]);
 /**
- * @param {string} arg - the part after `$`
+ * @param {string} arg - the part after `on:`
  * @returns {{ name: string, modifiers: Set<string>, unknown: string[] }}
  *   `unknown` has the modifiers we dont recognise
  *
@@ -700,11 +700,11 @@ const observer = new MutationObserver(records => {
 //
 // which we'll first do with @model:
 //
-//   <input p:value="name" $input="name = $event.target.value">
+//   <input p:value="name" on:input="name = $event.target.value">
 //
 // see this?
 // ~ p:value pushes state to dom
-// ~ $input pushes dom to state
+// ~ on:input pushes dom to state
 //
 // it doesn't have to be like this
 // . we just want to be able to write this instead
@@ -724,7 +724,7 @@ const observer = new MutationObserver(records => {
  * <p>HELL, <span p:text-content="name"></span>!</p>
  * <div class="row">
  * 	<input @model="name" placeholder="Name">
- * 	<button $click="name = 'Zadupie'">set to Zadupie</button>
+ * 	<button on:click="name = 'Zadupie'">set to Zadupie</button>
  * </div>
  * ```
  *
