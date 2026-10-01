@@ -46,7 +46,7 @@ const subscriptions = new WeakMap();
  * so func can be rerun when any of them change
  *
  * @param {() => void} func - the work to keep up to date (like update the dom)
- * @returns {void}
+ * @returns {() => void} call this to stop the effect 5ever
  */
 function effect(func) {
 	const run = () => {
@@ -58,6 +58,8 @@ function effect(func) {
 
 		try {
 			func();
+		} catch (error) {
+			console.error(error);
 		} finally {
 			activeEffect = previous; // func might throw but we still wanna restore
 		}
@@ -151,7 +153,7 @@ function flush() {
 
 /**
  * call on every property write
- * reruns everything that read thw property
+ * queues everything that read the property
  *
  * @param {object} target - where we're writing to
  * @param {string | symbol} key - the property name
@@ -165,28 +167,68 @@ function trigger(target, key) {
 }
 
 /**
+ * `proxy[RAW]` gives u the plain object behind a proxy
+ *
+ * an atom so it wont collide with a real property name
+ */
+const RAW = Symbol('raw');
+
+/**
+ * plain object -> its one and only proxy
+ *
+ * without this, every read would make a brand new proxy
+ * and `state.a === state.a` would be false (which breaks `indexOf` and friends)
+ *
+ * @type {WeakMap<object, object>}
+ */
+const proxies = new WeakMap();
+
+/**
+ * only plain objects and arrays are safe to proxy
+ *
+ * Date, Map, Set, dom nodes etc. keep their data in internal slots
+ * that a proxy cant forward, so calling their methods thru one throws
+ *
+ * @param {any} value
+ * @returns {boolean}
+ */
+function isPlain(value) {
+	if (!value || typeof value !== 'object') return false;
+
+	const proto = Object.getPrototypeOf(value);
+	return Array.isArray(value) || proto === Object.prototype || proto === null;
+}
+
+/**
  * wraps an object so that reading a property subscribes the running effect
  *
- * and writing a property re-runs its subscribers
+ * and writing a property queues its subscribers, but only if the value actually changed
  *
  * @template {object} T
  * @param {T} obj - the plain state object
  * @returns {T} a proxy with the same shape as obj
  */
 function reactive(obj) {
-	return new Proxy(obj, {
+	if (obj[RAW]) return obj; // already a proxy
+
+	const cached = proxies.get(obj);
+	if (cached) return cached;
+
+	const proxy = new Proxy(obj, {
 		/**
-		 * if the value is itself an object, we just give you a reactive version of it back
+		 * if the value is itself a plain object, we just give you a reactive version of it back
 		 *
 		 * @param {T} target
 		 * @param {string | symbol} key
 		 * @param {any} receiver - the proxy itself (or an object inheriting from it)
 		 */
 		get(target, key, receiver) {
+			if (key === RAW) return target;
+
 			track(target, key);
 			const value = Reflect.get(target, key, receiver);
 
-			return value && typeof value === 'object' ? reactive(value) : value;
+			return isPlain(value) ? reactive(value) : value;
 		},
 
 		/**
@@ -199,6 +241,10 @@ function reactive(obj) {
 		 * @returns {boolean} whether the write succeeded
 		 */
 		set(target, key, value, receiver) {
+			// store the plain object, never a proxy
+			// otherwise raw state slowly fills up with proxies
+			value = value?.[RAW] ?? value;
+
 			const isNew = !Object.hasOwn(target, key);
 			const old = target[key];
 
@@ -214,7 +260,25 @@ function reactive(obj) {
 			}
 			return ok;
 		},
+
+		/**
+		 * `delete obj.x` is a change too
+		 *
+		 * @param {T} target
+		 * @param {string | symbol} key
+		 * @returns {boolean} whether the delete succeeded
+		 */
+		deleteProperty(target, key) {
+			const had = Object.hasOwn(target, key);
+			const ok = Reflect.deleteProperty(target, key);
+
+			if (had) trigger(target, key);
+			return ok;
+		},
 	});
+
+	proxies.set(obj, proxy);
+	return proxy;
 }
 
 /*
@@ -250,11 +314,23 @@ function reactive(obj) {
 // if you're familiar with lua, it works just like `setfenv` there
 
 /**
+ * adds the offending source text to an error, so you can find which directive broke
+ *
+ * @param {any} error
+ * @param {string} source
+ * @returns {void}
+ */
+function annotate(error, source) {
+	if (error instanceof Error) error.message += `\n  in expression: ${source}`;
+}
+
+/**
  * eval a js expression string with a state object as its scope
  * , and an extra scope of temporary names that take priority over state
  *
  * @param {string} expression - source text, like `"count + 1"`.
  * @param {object} scope - ur reactive state object
+ * @param {object} [locals] - temporary names, like `{ $event: e }`
  * @returns {any} the expression's value
  */
 function evaluate(expression, scope, locals = {}) {
@@ -264,7 +340,7 @@ function evaluate(expression, scope, locals = {}) {
 			`with (scope) { with (locals) { return (${expression}) } }`
 		)(scope, locals);
 	} catch (error) {
-		error.message += `\n  in expression: ${expression}`;
+		annotate(error, expression);
 		throw error;
 	}
 }
@@ -277,14 +353,36 @@ function evaluate(expression, scope, locals = {}) {
  *
  * @param {string} statements - source text like `"a = 1; b = 2"`
  * @param {object} scope - ur reactive state object
+ * @param {object} [locals] - temporary names, like `{ $event: e }`
  * @returns {void}
  */
 function execute(statements, scope, locals = {}) {
-	new Function(
-		'scope', 'locals',
-		`with (scope) { with (locals) { ${statements} } }`
-	)(scope, locals);
+	try {
+		new Function(
+			'scope', 'locals',
+			`with (scope) { with (locals) { ${statements} } }`
+		)(scope, locals);
+	} catch (error) {
+		annotate(error, statements);
+		throw error;
+	}
 }
+
+/*
+ * methods and getters work without any extra code!
+ *
+ *   <div @data="{
+ *     todos: [],
+ *     add() { this.todos.push('x') },
+ *     get total() { return this.todos.length },
+ *   }">
+ *     <button on:click="add()">add</button>
+ *     <span p:text-content="total"></span>
+ *   </div>
+ *
+ * `with` makes `this` the reactive proxy, so writes inside add() trigger effects
+ * and getters get the proxy as `this`, so their reads are tracked
+ */
 
 /*
  * now we're set and ready to work on the DOM!
@@ -428,6 +526,12 @@ function walk(el, scope, locals = {}) {
 		if (kind === 'prop') {
 			bindProperty(el, kebabToCamel(arg), value, scope, locals);
 		} else if (kind === 'on') {
+			// modifiers like on:click.prevent arent a thing (yet)
+			// without this check the listener would sit on an event called "click.prevent" 5ever
+			if (arg.includes('.')) {
+				console.error(`stab: event modifiers arent supported: ${name}`, el);
+				continue;
+			}
 			bindEvent(el, arg, value, scope, locals);
 		} else if (kind === 'special' && arg === 'show') {
 			bindShow(el, value, scope, locals);
@@ -446,6 +550,18 @@ function walk(el, scope, locals = {}) {
 		if (!child.hasAttribute('@data')) walk(child, scope, locals);
 	}
 }
+
+const COMPONENT_SELECTOR = '[\\@data]';
+
+/**
+ * every mounted component root, with the function that stops it
+ *
+ * this stops it mounting twice and lets us trash on removal
+ *
+ * @type {Map<Element, () => void>}
+ */
+const components = new Map();
+
 /**
  * starts one component;
  *	 evaluates its `@data`,
@@ -473,26 +589,19 @@ function mount(root) {
 }
 
 /**
-	* @param {Element} root
-	* @returns {void}
-	*/
+ * stops a component and forgets it
+ *
+ * @param {Element} root
+ * @returns {void}
+ */
 function unmount(root) {
 	components.get(root)?.();
 	components.delete(root);
 }
 
-const COMPONENT_SELECTOR = '[\\@data]';
-
 /**
- * every mounted component root, with the function that stops it
+ * calls fn on a node if its a component root, and on every component inside it
  *
- * this stops us mounting twice, and lets us dispose on removal
- *
- * @type {Map<Element, () => void>}
- */
-const components = new Map();
-
-/**
  * @param {Node} node
  * @param {(root: Element) => void} fn
  * @returns {void}
@@ -522,18 +631,6 @@ const observer = new MutationObserver(records => {
 		});
 	}
 });
-
-function start() {
-	forEachComponent(document.documentElement, mount);
-	observer.observe(document.documentElement, { childList: true, subtree: true });
-}
-
-if (document.readyState === 'loading') {
-	document.addEventListener('DOMContentLoaded', start);
-} else {
-	start();
-}
-
 
 //
 // ok ok this is big
@@ -581,6 +678,7 @@ if (document.readyState === 'loading') {
  * @param {HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement} el
  * @param {string} path - something assignable, like "name" or "user.name"
  * @param {object} scope
+ * @param {object} locals
  * @returns {void}
  */
 function bindModel(el, path, scope, locals) {
@@ -727,3 +825,16 @@ function dispose(run) {
 }
 
 // if you're reading the code chronologically, i added batching this commit
+
+/** @returns {void} */
+function start() {
+	observer.observe(document.documentElement, { childList: true, subtree: true });
+	forEachComponent(document.documentElement, mount);
+}
+
+// this has to stay at the very very bottom of the file
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', start);
+} else {
+	start();
+}
