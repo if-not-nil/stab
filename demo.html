@@ -40,21 +40,21 @@
 			<button on:click="open = !open">toggle message</button>
 		</div>
 
-		<p>count: <span p:text-content="count"></span></p>
-		<p>double: <span p:text-content="count * 2"></span></p>
+		<p>count: <span :text-content="count"></span></p>
+		<p>double: <span :text-content="count * 2"></span></p>
 
-		<p p:class-name="count >= 3 ? 'hot' : ''">this turns bold and blue at 3 or more</p>
+		<p :class-name="count >= 3 ? 'hot' : ''">this turns bold and blue at 3 or more</p>
 		<p @show="open">try toggling this</p>
 
-		<button p:disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
+		<button :disabled="count >= 5" on:click="count++">add (disabled at 5)</button>
 	</section>
 
 	<section @data="{ name: 'world', agreed: false }">
 		<h1>one more</h1>
 
 		<p>hello,
-			<span p:text-content="name || 'Earth'"></span>!<br />
-			you <span p:text-content="agreed ? 'agreed' : 'didnt agree'"></span>
+			<span :text-content="name || 'Earth'"></span>!<br />
+			you <span :text-content="agreed ? 'agreed' : 'didnt agree'"></span>
 		</p>
 
 		<div class="row">
@@ -64,7 +64,7 @@
 
 		<label>
 			<input type="checkbox" @model="agreed"> agreed:
-			<span p:text-content="agreed"></span>
+			<span :text-content="agreed"></span>
 		</label>
 	</section>
 
@@ -76,7 +76,7 @@
 			<button on:mouseover="log = $event.type">hover me</button>
 		</div>
 
-		<p>last event: <span p:text-content="log"></span></p>
+		<p>last event: <span :text-content="log"></span></p>
 	</section>
 
 	<section @data="{ todos: ['buy milk', 'do the stab.js thing', 'hi'], draft: '' }">
@@ -84,20 +84,20 @@
 
 		<div class="row">
 			<input @model="draft" placeholder="new todo">
-			<button p:disabled="!draft" on:click="todos.push(draft); draft = ''">add</button>
+			<button :disabled="!draft" on:click="todos.push(draft); draft = ''">add</button>
 		</div>
 
 		<ul>
 			<template @for="(todo, i) in todos">
 				<li>
-					<span p:text-content="(i + 1) + '. ' + todo"></span>
+					<span :text-content="(i + 1) + '. ' + todo"></span>
 					<button on:click="todos.splice(i, 1)">i dont wanna</button>
 				</li>
 			</template>
 		</ul>
 
 		<i @show="todos.length === 0">crickets...</i>
-		<i><span p:text-content="todos.length"></span> tasks left</i>
+		<i><span :text-content="todos.length"></span> tasks left</i>
 	</section>
 
 	<section @data="{ clicks: 0, outer: '', key: 'none yet', keys: [], keypresses: 0, once: 0 }">
@@ -105,25 +105,32 @@
 
 		<p>
 			<a href="#nowhere" on:click.prevent="clicks++">prevent</a>
-			clicked <span p:text-content="clicks"></span> times, and the url didn't change
+			clicked <span :text-content="clicks"></span> times, and the url didn't change
 		</p>
 
 		<div class="row" on:click="outer = 'outer got it'">
 			<button on:click.stop="outer = 'inner only'">stop</button>
 			<button on:click="outer = outer">no stop</button>
-			<span p:text-content="outer"></span>
+			<span :text-content="outer"></span>
 		</div>
 
 		<button on:click.once="once++">once</button>
-		ran <span p:text-content="once"></span> time(s)
+		ran <span :text-content="once"></span> time(s)
 
-		<p>pressed any key <span p:text-content="keypresses"></span> times: <br>
-			<code p:text-content="key"></code>
-			<span on:keydown.window="keypresses++; key = $event.key; keys[key] ? keys[key] += 1 : keys[key] = 0"></span>
-			<span @for="(keyname, i) in keys">
-				<span p:text-content="keyname"></span>
-			</span>
+		<p>pressed any key <span :text-content="keypresses"></span> times:
+			<code :text-content="key"></code>
+			<span on:keydown.window="
+				keypresses++;
+				key = $event.key;
+				const seen = keys.find(k => k.name === key);
+				if (seen) seen.count++; else keys.push({ name: key, count: 1 });
+			"></span>
 		</p>
+		<ul>
+			<template @for="entry in keys">
+				<li :text-content="entry.name + ' x ' + entry.count"></li>
+			</template>
+		</ul>
 	</section>
 
 </body>

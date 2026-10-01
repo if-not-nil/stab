@@ -294,7 +294,7 @@ function reactive(obj) {
  * this is the part where we make it evaluate expressions
  * we get:
  *   <button on:click="count++">
- *   <span p:text="count">
+ *   <span :text="count">
  *
  * html gives us strings. but if you look at these strings, count it there, but not anywhere in the js!
  * it is instead a state object. we need to treat `count` as `state.count`
@@ -378,7 +378,7 @@ function execute(statements, scope, locals = {}) {
  *     get total() { return this.todos.length },
  *   }">
  *     <button on:click="add()">add</button>
- *     <span p:text-content="total"></span>
+ *     <span :text-content="total"></span>
  *   </div>
  *
  * `with` makes `this` the reactive proxy, so writes inside add() trigger effects
@@ -391,9 +391,9 @@ function execute(statements, scope, locals = {}) {
  *
  *   <div @data="{ count: 0, open: true }">
  *     <button on:click="count++">Add</button>
- *     <span p:textContent="count"></span>
+ *     <span :textContent="count"></span>
  *     <p @show="open">Hello</p>
- *     <button p:disabled="count >= 3" on:click="open = !open">Toggle</button>
+ *     <button :disabled="count >= 3" on:click="open = !open">Toggle</button>
  *   </div>
  *
  */
@@ -401,7 +401,7 @@ function execute(statements, scope, locals = {}) {
 
 /** @type {Record<string, 'prop' | 'on' | 'special'>} */
 const PREFIXES = {
-	'p:': 'prop',      // p:textContent -> set a dom property
+	':': 'prop',      // :textContent -> set a dom property
 	'on:': 'on',       // on:click      -> add an event listener
 	'@': 'special',    // @show         -> built-in directives
 };
@@ -427,7 +427,7 @@ function parseAttribute(name) {
 }
 // html attributes are, unfortunately, lowercased when they're parsed.
 //
-// `<span p:textContent="count">` reaches js as `p:textcontent`
+// `<span :textContent="count">` reaches js as `:textcontent`
 //
 // the workaround is writing multiword properties in kebabcase and convert
 
@@ -436,7 +436,7 @@ function kebabToCamel(text) {
 	return text.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
-// p:<prop> is an effect
+// :<prop> is an effect
 // it runs the expr and assigns the result to the property
 //
 // because `evaluate` reads thru the reactive property, the effect
@@ -602,6 +602,7 @@ const EVENT_MODIFIERS = new Set([
 	'window',   // listens on window instead of the element
 	'document', // listens on document instead of the element
 ]);
+
 /**
  * @param {string} arg - the part after `on:`
  * @returns {{ name: string, modifiers: Set<string>, unknown: string[] }}
@@ -674,7 +675,7 @@ function forEachComponent(node, fn) {
  * watch the whole page for added or removed nodes
  *
  * the callback runs async, after the dom change is finished,
- * so isConnected tells us where a node ended up:
+ * so isConnected tells us where a node ended u:
  *   - removed & moved elsewhere  => still connected, leave it alone
  *   - added & then removed again => not connected, never mount it
  */
@@ -700,10 +701,10 @@ const observer = new MutationObserver(records => {
 //
 // which we'll first do with @model:
 //
-//   <input p:value="name" on:input="name = $event.target.value">
+//   <input :value="name" on:input="name = $event.target.value">
 //
 // see this?
-// ~ p:value pushes state to dom
+// ~ :value pushes state to dom
 // ~ on:input pushes dom to state
 //
 // it doesn't have to be like this
@@ -721,7 +722,7 @@ const observer = new MutationObserver(records => {
  * everything else uses `value` (a string) and the `input` event
  *
  * ```html
- * <p>HELL, <span p:text-content="name"></span>!</p>
+ * <p>HELL, <span :text-content="name"></span>!</p>
  * <div class="row">
  * 	<input @model="name" placeholder="Name">
  * 	<button on:click="name = 'Zadupie'">set to Zadupie</button>
@@ -767,7 +768,7 @@ function bindModel(el, path, scope, locals) {
 //
 //   <ul>
 //     <template @for="todo in todos">
-//       <li p:text-content="todo"></li>
+//       <li :text-content="todo"></li>
 //     </template>
 //   </ul>
 // 
@@ -861,6 +862,7 @@ function bindFor(template, spec, scope, locals) {
 function onCleanup(fn) {
 	activeEffect?.cleanups.add(fn);
 }
+
 /**
  * unsubscribes an effect from everything, and disposes the effects it created
  *
