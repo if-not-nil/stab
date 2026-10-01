@@ -33,7 +33,7 @@
      ================================ -->
 
 	<section @data="{ count: 0, open: true }">
-		<h2>the big ones</h2>
+		<h1>the big ones</h1>
 		<div class="row">
 			<button on:click="count++">add</button>
 			<button on:click="count = 0">reset</button>
@@ -50,7 +50,7 @@
 	</section>
 
 	<section @data="{ name: 'world', agreed: false }">
-		<h2>one more</h2>
+		<h1>one more</h1>
 
 		<p>hello,
 			<span p:text-content="name || 'Earth'"></span>!<br />
@@ -69,7 +69,7 @@
 	</section>
 
 	<section @data="{ log: 'nothing yet' }">
-		<h2>events and <code>$event</code></h2>
+		<h1>events and <code>$event</code></h1>
 
 		<div class="row">
 			<button on:click="log = $event.type + ' on ' + $event.target.tagName">click me</button>
@@ -80,7 +80,7 @@
 	</section>
 
 	<section @data="{ todos: ['buy milk', 'do the stab.js thing', 'hi'], draft: '' }">
-		<h2>loops, with <code>@for</code></h2>
+		<h1>loops, with <code>@for</code></h1>
 
 		<div class="row">
 			<input @model="draft" placeholder="new todo">
@@ -99,6 +99,33 @@
 		<i @show="todos.length === 0">crickets...</i>
 		<i><span p:text-content="todos.length"></span> tasks left</i>
 	</section>
+
+	<section @data="{ clicks: 0, outer: '', key: 'none yet', keys: [], keypresses: 0, once: 0 }">
+		<h2>event modifiers</h2>
+
+		<p>
+			<a href="#nowhere" on:click.prevent="clicks++">prevent</a>
+			clicked <span p:text-content="clicks"></span> times, and the url didn't change
+		</p>
+
+		<div class="row" on:click="outer = 'outer got it'">
+			<button on:click.stop="outer = 'inner only'">stop</button>
+			<button on:click="outer = outer">no stop</button>
+			<span p:text-content="outer"></span>
+		</div>
+
+		<button on:click.once="once++">once</button>
+		ran <span p:text-content="once"></span> time(s)
+
+		<p>pressed any key <span p:text-content="keypresses"></span> times: <br>
+			<code p:text-content="key"></code>
+			<span on:keydown.window="keypresses++; key = $event.key; keys[key] ? keys[key] += 1 : keys[key] = 0"></span>
+			<span @for="(keyname, i) in keys">
+				<span p:text-content="keyname"></span>
+			</span>
+		</p>
+	</section>
+
 </body>
 
 </html>

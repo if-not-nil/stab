@@ -67,6 +67,7 @@ function effect(func) {
 
 	run.deps = new Set();     // sets of effects that have us
 	run.children = new Set(); // effects created while we were runninh
+	run.cleanups = new Set(); // see onCleanup
 	run.disposed = false;
 
 	if (activeEffect) activeEffect.children.add(run); // whoever's running owns us
@@ -457,20 +458,54 @@ function bindProperty(el, prop, expression, scope, locals) {
 
 // on:<event> is not an effect, bc it doesn't read state when set up
 // it only runs when the event is fired, so its just a listener
+
 /**
  * runs statements whenever a dom event fires on the element
+ * see EVENT_MODIFIERS for their list and descriptions
  *
  * @param {HTMLElement} el
- * @param {string} eventName - any dom event: "click", "input", "keydown", etc.
+ * @param {string} arg - everything after `on:`
  * @param {string} statements - source text like "count++"
  * @param {object} scope - yr reactive state
  * @param {object} locals - `$event` is added on top
  * @returns {void}
  */
-function bindEvent(el, eventName, statements, scope, locals) {
-	el.addEventListener(eventName, event => {
+function bindEvent(el, arg, statements, scope, locals) {
+	const { name, modifiers, unknown } = parseEvent(arg);
+
+	// better to bind nothing than something thats kinda wrong
+	if (unknown.length) {
+		console.error(`stab: unknown event modifier(s) ${unknown.map(m => '.' + m).join(', ')} on on:${arg}`, el);
+		return;
+	}
+
+	const target =
+		modifiers.has('window') ? window :
+			modifiers.has('document') ? document :
+				el;
+
+	const handler = event => {
+		if (modifiers.has('self') && event.target !== el) return;
+		if (modifiers.has('prevent')) event.preventDefault();
+		if (modifiers.has('stop')) event.stopPropagation();
+
 		execute(statements, scope, { ...locals, $event: event });
-	});
+	};
+
+	const options = {
+		capture: modifiers.has('capture'),
+		once: modifiers.has('once'),
+		passive: modifiers.has('passive'),
+	};
+
+	target.addEventListener(name, handler, options);
+
+	// listeners on the element die with the element
+	//   , but window and document outlive it
+	//   , so we have to take those off ourselves
+	if (target !== el) {
+		onCleanup(() => target.removeEventListener(name, handler, options));
+	}
 }
 
 // we have an effect that toggles display, and it is `@show`
@@ -526,12 +561,6 @@ function walk(el, scope, locals = {}) {
 		if (kind === 'prop') {
 			bindProperty(el, kebabToCamel(arg), value, scope, locals);
 		} else if (kind === 'on') {
-			// modifiers like on:click.prevent arent a thing (yet)
-			// without this check the listener would sit on an event called "click.prevent" 5ever
-			if (arg.includes('.')) {
-				console.error(`stab: event modifiers arent supported: ${name}`, el);
-				continue;
-			}
 			bindEvent(el, arg, value, scope, locals);
 		} else if (kind === 'special' && arg === 'show') {
 			bindShow(el, value, scope, locals);
@@ -561,6 +590,34 @@ const COMPONENT_SELECTOR = '[\\@data]';
  * @type {Map<Element, () => void>}
  */
 const components = new Map();
+
+/** the modifiers `on:` understands */
+const EVENT_MODIFIERS = new Set([
+	'prevent',  // calls event.preventDefault()
+	'stop',     // calls event.stopPropagation()
+	'self',     // only runs if the event started on this exact element
+	'once',     // runs at most one time
+	'capture',  // listens during the capture phase instead of bubbling
+	'passive',  // promises never to call preventDefault (for smooth)
+	'window',   // listens on window instead of the element
+	'document', // listens on document instead of the element
+]);
+/**
+ * @param {string} arg - the part after `on:`
+ * @returns {{ name: string, modifiers: Set<string>, unknown: string[] }}
+ *   `unknown` has the modifiers we dont recognise
+ *
+ * @example
+ * parseEvent('click');               // { name: 'click', modifiers: Set {}, unknown: [] }
+ * parseEvent('click.prevent.stop');  // { name: 'click', modifiers: Set { 'prevent', 'stop' }, unknown: [] }
+ * parseEvent('click.prevnet');       // { ..., unknown: ['prevnet'] }
+ */
+function parseEvent(arg) {
+	const [name, ...rest] = arg.split('.');
+	const modifiers = new Set(rest);
+	const unknown = rest.filter(modifier => !EVENT_MODIFIERS.has(modifier));
+	return { name, modifiers, unknown };
+}
 
 /**
  * starts one component;
@@ -798,6 +855,13 @@ function bindFor(template, spec, scope, locals) {
 }
 
 /**
+ * @param {() => void} fn
+ * @returns {void}
+ */
+function onCleanup(fn) {
+	activeEffect?.cleanups.add(fn);
+}
+/**
  * unsubscribes an effect from everything, and disposes the effects it created
  *
  * gonna be called b4 every rerun & when the effect is disposed 5ever
@@ -806,6 +870,9 @@ function bindFor(template, spec, scope, locals) {
  * @returns {void}
  */
 function cleanup(run) {
+	run.cleanups.forEach(fn => fn());
+	run.cleanups.clear();
+
 	run.children.forEach(dispose);
 	run.children.clear();
 
