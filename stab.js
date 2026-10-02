@@ -95,6 +95,7 @@
 		run.children = new Set(); // effects created while we were runninh
 		run.cleanups = new Set(); // see onCleanup
 		run.disposed = false;
+		run.parent = activeEffect;
 
 		if (activeEffect) activeEffect.children.add(run); // whoever's running owns us
 
@@ -600,12 +601,8 @@
 
 		target.addEventListener(name, handler, options);
 
-		// listeners on the element die with the element
-		//   , but window and document outlive it
-		//   , so we have to take those off ourselves
-		if (target !== el) {
-			onCleanup(() => target.removeEventListener(name, handler, options));
-		}
+		// Also remove local listeners on unmount, since the DOM may be reused.
+		onCleanup(() => target.removeEventListener(name, handler, options));
 	}
 
 	// we have an effect that toggles display, and it is `@show`
@@ -635,15 +632,89 @@
 	// 2...
 	// 1.......
 
-	/**
-	 * wires up every directive on an element & all of its descendants
+	/*
+	 * a component owns a whole tree, but an HTTP response can replace just one bit
 	 *
-	 * @param {HTMLElement} el - the element to process
-	 * @param {object} scope - yr shared reactive state
-	 * @param {object} [locals] - tmp names from enclosing @for rows
-	 * @returns {void}
+	 * if that bit had effects and listeners, we have to stop them
+	 *   , without stopping everything else in the component
+	 *
+	 * so each element gets its own effect that owns its setup & its children
+	 * the WeakMap remembers how to stop it, and which state to give new children
+	 * this is also how returned html can say `on:click="count++"` and just work
 	 */
+	const bindings = new WeakMap();
+	/** custom @directives, separate from the built-ins below */
+	const directives = Object.create(null);
+	/** all of these use the same request code; only the HTTP method changes */
+	const REQUEST_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+
+	/**
+	 * registers a custom @directive, including on already mounted elements
+	 * setup receives { el, value, evaluate, execute, effect, cleanup }
+	 * cleanup callbacks run when the element or its component is disposed
+	 */
+	function defineDirective(name, setup) {
+		if (!/^[a-z][a-z0-9-]*$/.test(name) ||
+			['data', 'for', 'show', 'model', 'ref', 'init', 'target'].includes(name) ||
+			REQUEST_METHODS.has(name) ||
+			typeof setup !== 'function') {
+			throw new Error(`stab: invalid custom directive "${name}"`);
+		}
+		if (Object.hasOwn(directives, name)) {
+			throw new Error(`stab: directive "${name}" is already registered`);
+		}
+		directives[name] = setup;
+		// registering later works too; existing elements get their setup now
+		document.querySelectorAll(`[\\@${name}]`).forEach(el => {
+			if (bindings.has(el)) bindDirective(el, name, el.getAttribute('@' + name));
+		});
+	}
+
+	function bindDirective(el, name, value) {
+		const binding = bindings.get(el);
+		if (binding.custom.has(name)) return;
+		binding.custom.add(name);
+		const previous = activeEffect;
+		// even if setup was registered later, this element still owns its cleanup
+		activeEffect = binding.owner;
+		try {
+			untracked(() => directives[name]({
+				el, value,
+				evaluate: expression => evaluate(expression, binding.scope, binding.here),
+				execute: statements => execute(statements, binding.scope, binding.here),
+				effect,
+				cleanup: onCleanup,
+			}));
+		} finally { activeEffect = previous }
+	}
+
+	/** Walk a subtree, preserving existing bindings when elements move. */
 	function walk(el, scope, locals = {}) {
+		const existing = bindings.get(el);
+		if (existing) {
+			if (activeEffect && existing.parent !== el.parentElement) {
+				// moving an element isn't a new setup!
+				// its new parent takes care of it, so removing the old one won't kill it
+				existing.owner.parent?.children.delete(existing.owner);
+				existing.owner.parent = activeEffect;
+				activeEffect.children.add(existing.owner);
+				existing.parent = el.parentElement;
+			}
+			return;
+		}
+		const stop = effect(() => {
+			bindings.set(el, {
+				scope, locals, owner: activeEffect,
+				parent: el.parentElement, custom: new Set(),
+			});
+			onCleanup(() => bindings.delete(el));
+			untracked(() => bindElement(el, scope, locals));
+		});
+		const binding = bindings.get(el);
+		if (binding) binding.stop = stop;
+	}
+
+	function bindElement(el, scope, locals) {
 		// bindfor walks each row itself so we can let it take over
 		if (el.tagName === 'TEMPLATE' && el.hasAttribute('@for')) {
 			bindFor(el, el.getAttribute('@for'), scope, locals);
@@ -657,6 +728,7 @@
 			$dispatch: (name, detail) =>
 				el.dispatchEvent(new CustomEvent(name, { detail, bubbles: true })),
 		};
+		bindings.get(el).here = here;
 
 		for (const { name, value } of [...el.attributes]) {
 			const directive = parseAttribute(name);
@@ -682,6 +754,10 @@
 						console.error("stab: broken init", error);
 					}
 				});
+			} else if (kind === 'special' && REQUEST_METHODS.has(arg)) {
+				bindRequest(el, arg);
+			} else if (kind === 'special' && Object.hasOwn(directives, arg)) {
+				bindDirective(el, arg, value);
 			}
 		}
 
@@ -860,12 +936,28 @@
 	 *   - added & then removed again => not connected, never mount it
 	 */
 	const observer = new MutationObserver(records => {
+		// Settle ownership for connected moves first. A detached ancestor may
+		// appear in an earlier record than the children rescued from it.
+		for (const record of records) {
+			record.addedNodes.forEach(node => {
+				if (!node.isConnected || node.nodeType !== Node.ELEMENT_NODE) return;
+				forEachComponent(node, mount);
+				const context = bindings.get(node.parentElement);
+				if (!context || context.owner.disposed || node.hasAttribute('@data')) return;
+
+				// The target owns newly inserted bindings just as if they were
+				// present on the first walk, including any enclosing loop locals.
+				const previous = activeEffect;
+				activeEffect = context.owner;
+				try { walk(node, context.scope, context.locals) }
+				finally { activeEffect = previous }
+			});
+		}
 		for (const record of records) {
 			record.removedNodes.forEach(node => {
-				if (!node.isConnected) forEachComponent(node, unmount);
-			});
-			record.addedNodes.forEach(node => {
-				if (node.isConnected) forEachComponent(node, mount);
+				if (node.isConnected || node.nodeType !== Node.ELEMENT_NODE) return;
+				forEachComponent(node, unmount);
+				bindings.get(node)?.stop();
 			});
 		}
 	});
@@ -934,9 +1026,11 @@
 		});
 
 		// dom -> state //
-		el.addEventListener(eventName, () => {
+		const handler = () => {
 			execute(`${path} = $value`, scope, { ...locals, $value: el[prop] });
-		});
+		};
+		el.addEventListener(eventName, handler);
+		onCleanup(() => el.removeEventListener(eventName, handler));
 	}
 
 	//
@@ -1035,6 +1129,217 @@
 		});
 	}
 
+	/*
+	 * ok, what if the html lives on a server?
+	 *
+	 *   <div @data>
+	 *     <button @get="/messages" @target="#messages">load</button>
+	 *     <main id="messages"></main>
+	 *   </div>
+	 *
+	 * we already know how to react to a click, and how to bind new html
+	 *   , so the bit in the middle is just fetch + innerHTML
+	 *
+	 * ~ @get, @post, @put, @patch, @delete pick the HTTP method
+	 * ~ @target picks whose contents to replace, or `this` for the requester
+	 * ~ a form submits; everything else listens for a click
+	 *
+	 * the server gives us html, not state. any directives in it are picked up
+	 * by the observer above, using the target's component and loop variables
+	 *
+	 * the fiddly bit is time: two requests might finish in the wrong order,
+	 * or a component might disappear while its response is still coming
+	 * lets not let yesterday's response overwrite today's page
+	 */
+
+	/**
+	 * target element -> the request currently allowed to replace its contents
+	 * aborting alone isn't enough; a response could already have arrived
+	 * so we also check that this is still our request before writing any html
+	 *
+	 * @type {WeakMap<Element, object>}
+	 */
+	const pendingRequests = new WeakMap();
+
+	/**
+	 * turns form fields into a query string or an ordinary POST body
+	 * repeated names stay repeated; files become filenames in this encoding
+	 * multipart forms keep the actual FormData instead, so uploads stay intact
+	 *
+	 * @param {FormData} data
+	 * @returns {URLSearchParams}
+	 */
+	function formParams(data) {
+		const params = new URLSearchParams();
+		for (const [name, value] of data) {
+			params.append(name, typeof value === 'string' ? value : value.name);
+		}
+		return params;
+	}
+
+	/**
+	 * sends a request when this element is clicked, or this form is submitted
+	 * URLs and @target are literal strings, read again for each request
+	 * request events bubble, so ordinary on: handlers can show loading & errors
+	 *
+	 * @param {HTMLElement} el
+	 * @param {string} method - one of REQUEST_METHODS
+	 * @returns {void}
+	 */
+	function bindRequest(el, method) {
+		let alive = true;
+		let current = null;
+		const isForm = el.tagName === 'FORM';
+		const eventName = isForm ? 'submit' : 'click';
+
+		const handler = event => {
+			// somebody else handled this, or this binding no longer owns the element
+			if (event.defaultPrevented || !alive) return;
+			if (isForm && event.target !== el) return;
+			// ctrl-click, downloads, new tabs etc still belong to the browser
+			if (!isForm && (event.button !== 0 || event.ctrlKey || event.metaKey ||
+				event.shiftKey || event.altKey || el.hasAttribute('download') ||
+				(el.tagName === 'A' && el.target && el.target !== '_self'))) return;
+			event.preventDefault();
+			// clicking "save" three times while busy still sends just one POST
+			if (!current) send(event);
+		};
+
+		async function send(event) {
+			const controller = new AbortController();
+			const request = { controller, finished: false };
+			current = request;
+			let target;
+			let busy = false;
+			let replacedSource = false;
+			let completed = false; // cleanup and finally might both try to finish
+			const previousBusy = el.getAttribute('aria-busy');
+			const detail = {
+				url: null, options: null, target: null,
+				response: null, error: null, aborted: false, canceled: false,
+			};
+			const emit = (name, cancelable = false) => {
+				// our button might have been INSIDE the html we just replaced
+				// bubble from the surviving target then, so the component still hears
+				return (replacedSource ? target : el).dispatchEvent(new CustomEvent(name, {
+					detail, bubbles: true, cancelable,
+				}));
+			};
+			const finish = () => {
+				if (completed) return;
+				completed = true;
+				request.finished = true;
+				// a newer request could own this target now; don't erase its entry
+				if (pendingRequests.get(target) === request) pendingRequests.delete(target);
+				if (busy) {
+					if (previousBusy === null) el.removeAttribute('aria-busy');
+					else el.setAttribute('aria-busy', previousBusy);
+				}
+				current = null;
+				emit('stab:complete');
+			};
+			// finish NOW when removed, not whenever fetch eventually rejects
+			// otherwise a quick unmount/remount could let this old request clear
+			// the new one's aria-busy, or fire complete into its fresh handlers
+			request.cancel = () => {
+				detail.aborted = true;
+				controller.abort();
+				finish();
+			};
+
+			try {
+				if ([...REQUEST_METHODS].filter(name => el.hasAttribute('@' + name)).length !== 1) {
+					throw new Error('stab: use exactly one request directive per element');
+				}
+				const address = el.getAttribute('@' + method)?.trim();
+				if (!address) throw new Error('stab: a request URL is required');
+				const url = new URL(address, document.baseURI);
+				if (!['http:', 'https:'].includes(url.protocol)) {
+					throw new Error('stab: the request URL must use HTTP or HTTPS');
+				}
+				const selector = el.getAttribute('@target')?.trim();
+				if (!selector) throw new Error('stab: @target is required');
+				target = selector === 'this' ? el : document.querySelector(selector);
+				if (!target) throw new Error(`stab: target "${selector}" was not found`);
+				detail.target = target;
+
+				const options = {
+					method: method.toUpperCase(),
+					headers: { Accept: 'text/html' },
+					signal: controller.signal,
+				};
+				if (isForm) {
+					// the browser knows which fields count, including the submit button
+					// GET puts them in the URL; multipart lets the browser set its boundary
+					const data = new FormData(el, event.submitter || undefined);
+					if (method === 'get') {
+						for (const [name, value] of formParams(data)) url.searchParams.append(name, value);
+					} else {
+						options.body = el.enctype === 'multipart/form-data' ? data : formParams(data);
+					}
+				}
+				detail.url = url.href;
+				detail.options = options;
+				// dispatchEvent returns false when a listener calls preventDefault
+				// this is also the moment to add headers or change Fetch options
+				if (!emit('stab:before-request', true)) {
+					detail.canceled = true;
+					return;
+				}
+				if (!alive || !el.isConnected || !target.isConnected) {
+					detail.aborted = true;
+					return;
+				}
+
+				pendingRequests.get(target)?.controller.abort();
+				pendingRequests.set(target, request);
+				busy = true;
+				el.setAttribute('aria-busy', 'true');
+				// headers etc are customizable; cancellation still belongs to us
+				const response = await fetch(detail.url, { ...options, signal: controller.signal });
+				detail.response = response;
+				// fetch resolves for HTTP errors too! "we got a response" isn't success
+				if (!response.ok) throw new Error(`stab: HTTP ${response.status} ${response.statusText}`);
+				const html = response.status === 204 ? null : await response.text();
+				// check again AFTER waiting for the body, not just after the headers
+				if (controller.signal.aborted || !alive || !el.isConnected ||
+					!target.isConnected || pendingRequests.get(target) !== request) {
+					detail.aborted = true;
+					return;
+				}
+
+				// a successful swap may remove our own requester; that's completion,
+				// so its cleanup mustn't mistake this for a request to abort
+				request.finished = true;
+				// 204 means leave it alone; an empty 200 really does mean empty html
+				if (html !== null) target.innerHTML = html;
+				replacedSource = !el.isConnected;
+				// wait for the observer to bind the fragment before saying it's ready
+				await nextTick();
+				emit('stab:success');
+			} catch (error) {
+				// deliberate cancellation doesn't need an error message in the UI
+				if (controller.signal.aborted || !alive || !el.isConnected ||
+					(target && !target.isConnected)) {
+					detail.aborted = true;
+				} else {
+					detail.error = error;
+					emit('stab:error');
+				}
+			} finally {
+				finish();
+			}
+		}
+
+		el.addEventListener(eventName, handler);
+		onCleanup(() => {
+			alive = false;
+			el.removeEventListener(eventName, handler);
+			if (current && !current.finished) current.cancel();
+		});
+	}
+
+
 	/**
 	 * registers a function to run when the currently running effect reruns or is disposed
 	 *
@@ -1074,7 +1379,9 @@
 	 * @returns {void}
 	 */
 	function dispose(run) {
+		if (run.disposed) return;
 		run.disposed = true;
+		run.parent?.children.delete(run);
 		cleanup(run);
 	}
 
@@ -1122,6 +1429,7 @@
 		// registering things
 		data: defineData,
 		store: defineStore,
+		directive: defineDirective,
 
 		// manually stabbing
 		mount, unmount, start,
