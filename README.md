@@ -30,7 +30,7 @@ every piece of code is explained in `stab.js`
 
 put this on your page
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/w0x7y/stab@main/stab.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/if-not-nil/stab@main/stab.js"></script>
 ```
 
 **tutorials:**
