@@ -7,7 +7,32 @@
 	<title>stab.js demo</title>
 	<!-- my css, please check it out -->
 	<link rel="stylesheet" href="barkful.css" />
+
+	<!--
+		the old friendly script tag tag runs before the deferred stab.js right there
+		so `Stab` doesnt exist yet
+		but the callback only runs when stab.js fires `stab:init`
+		, right be5 mounting so by then `Stab` is there
+		and counter(5) is done in time
+	-->
+	<script>
+		document.addEventListener('stab:init', () => {
+			Stab.data('counter', (start = 0) => ({
+				count: start,
+				inc() {this.count++},
+			}));
+
+			// shared by every component as $store.shared
+			const shared = Stab.store('shared', {clicks: 0});
+
+			// plain script code reacting to the same state
+			Stab.effect(() => {
+				document.title = `stab.js demo (${shared.clicks} shared clicks)`;
+			});
+		});
+	</script>
 	<script defer src="stab.js"> </script>
+
 	<style>
 		.row {
 			display: flex;
@@ -34,6 +59,7 @@
 
 	<section @data="{ count: 0, open: true }">
 		<h1>the big ones</h1>
+
 		<div class="row">
 			<button on:click="count++">add</button>
 			<button on:click="count = 0">reset</button>
@@ -157,6 +183,38 @@
 				<li :text-content="entry.name + ' x ' + entry.count"></li>
 			</template>
 		</ul>
+	</section>
+
+
+	<!-- stuff registered from the script tag in <head> -->
+
+	<section @data="counter(5)">
+		<h1>from a script tag: <code>Stab.data</code></h1>
+
+		<p>this component came from <code>Stab.data('counter', ...)</code>, started at 5</p>
+		<div class="row">
+			<button on:click="inc()">+</button>
+			<span :text-content="count"></span>
+		</div>
+	</section>
+
+
+	<section @data>
+		<h1>from a script tag: <code>Stab.store</code></h1>
+
+		<p>shared with the next component, and with the page title</p>
+		<div class="row">
+			<button on:click="$store.shared.clicks++">shared click</button>
+			<span :text-content="$store.shared.clicks"></span>
+		</div>
+	</section>
+
+
+	<section @data>
+		<h1>same store, another component</h1>
+
+		<p>shared clicks: <span :text-content="$store.shared.clicks"></span></p>
+		<button on:click="$store.shared.clicks = 0">reset</button>
 	</section>
 
 </body>
