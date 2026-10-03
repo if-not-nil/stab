@@ -7,7 +7,7 @@ import html
 import json
 import sys
 
-# serve the project next to this file, even when started from another directory
+# serve this file's directory, regardless of cwd
 ROOT = Path(__file__).resolve().parent
 
 
@@ -22,11 +22,11 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == '/demo/fragment':
-            # the browser binds these directives to the component that loaded it
+            # directives use the loading component's state
             self.respond(200, '<div class="row"><button on:click="count++">fragment add</button> '
                          '<span :text-content="count"></span></div>')
         elif path == '/demo/error':
-            # a failed response should leave the previous fragment alone
+            # errors leave the previous fragment intact
             self.respond(422, '<p>this response should not replace the fragment</p>')
         else:
             super().do_GET()
@@ -37,7 +37,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
         fields = parse_qs(body.decode('utf-8'), keep_blank_values=True)
-        # escape the submitted text before returning it as html
+        # escape submitted text for html
         payload = html.escape(json.dumps({'method': 'POST', 'fields': fields}, indent=2))
         self.respond(200, f'<pre>{payload}</pre>')
 
@@ -50,7 +50,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
-            pass  # the browser canceled the request or closed the page
+            pass  # request canceled or page closed
 
 
 if __name__ == '__main__':

@@ -601,7 +601,7 @@
 
 		target.addEventListener(name, handler, options);
 
-		// Also remove local listeners on unmount, since the DOM may be reused.
+		// remove local listeners too; the DOM may be reused
 		onCleanup(() => target.removeEventListener(name, handler, options));
 	}
 
@@ -633,19 +633,13 @@
 	// 1.......
 
 	/*
-	 * a component owns a whole tree, but an HTTP response can replace just one bit
-	 *
-	 * if that bit had effects and listeners, we have to stop them
-	 *   , without stopping everything else in the component
-	 *
-	 * so each element gets its own effect that owns its setup & its children
-	 * the WeakMap remembers how to stop it, and which state to give new children
-	 * this is also how returned html can say `on:click="count++"` and just work
+	 * each element owns its effects & children, so replacing html cleans up just that bit
+	 * bindings remembers its cleanup and the state for new children
 	 */
 	const bindings = new WeakMap();
 	/** custom @directives, separate from the built-ins below */
 	const directives = Object.create(null);
-	/** all of these use the same request code; only the HTTP method changes */
+	/** shared request code, different HTTP methods */
 	const REQUEST_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
 
 	/**
@@ -664,7 +658,7 @@
 			throw new Error(`stab: directive "${name}" is already registered`);
 		}
 		directives[name] = setup;
-		// registering later works too; existing elements get their setup now
+		// bind existing elements too
 		document.querySelectorAll(`[\\@${name}]`).forEach(el => {
 			if (bindings.has(el)) bindDirective(el, name, el.getAttribute('@' + name));
 		});
@@ -675,7 +669,7 @@
 		if (binding.custom.has(name)) return;
 		binding.custom.add(name);
 		const previous = activeEffect;
-		// even if setup was registered later, this element still owns its cleanup
+		// the element owns cleanup, even for late registration
 		activeEffect = binding.owner;
 		try {
 			untracked(() => directives[name]({
@@ -693,8 +687,7 @@
 		const existing = bindings.get(el);
 		if (existing) {
 			if (activeEffect && existing.parent !== el.parentElement) {
-				// moving an element isn't a new setup!
-				// its new parent takes care of it, so removing the old one won't kill it
+				// transfer ownership so the old parent's cleanup won't stop it
 				existing.owner.parent?.children.delete(existing.owner);
 				existing.owner.parent = activeEffect;
 				activeEffect.children.add(existing.owner);
@@ -936,8 +929,7 @@
 	 *   - added & then removed again => not connected, never mount it
 	 */
 	const observer = new MutationObserver(records => {
-		// Settle ownership for connected moves first. A detached ancestor may
-		// appear in an earlier record than the children rescued from it.
+		// transfer moved children before cleaning up detached ancestors
 		for (const record of records) {
 			record.addedNodes.forEach(node => {
 				if (!node.isConnected || node.nodeType !== Node.ELEMENT_NODE) return;
@@ -945,8 +937,7 @@
 				const context = bindings.get(node.parentElement);
 				if (!context || context.owner.disposed || node.hasAttribute('@data')) return;
 
-				// The target owns newly inserted bindings just as if they were
-				// present on the first walk, including any enclosing loop locals.
+				// new children inherit the parent's owner, state & loop locals
 				const previous = activeEffect;
 				activeEffect = context.owner;
 				try { walk(node, context.scope, context.locals) }
@@ -1137,34 +1128,24 @@
 	 *     <main id="messages"></main>
 	 *   </div>
 	 *
-	 * we already know how to react to a click, and how to bind new html
-	 *   , so the bit in the middle is just fetch + innerHTML
-	 *
 	 * ~ @get, @post, @put, @patch, @delete pick the HTTP method
 	 * ~ @target picks whose contents to replace, or `this` for the requester
 	 * ~ a form submits; everything else listens for a click
 	 *
-	 * the server gives us html, not state. any directives in it are picked up
-	 * by the observer above, using the target's component and loop variables
-	 *
-	 * the fiddly bit is time: two requests might finish in the wrong order,
-	 * or a component might disappear while its response is still coming
-	 * lets not let yesterday's response overwrite today's page
+	 * the observer binds returned html to the target's state & loop variables
+	 * stale requests mustn't overwrite newer html or detached components
 	 */
 
 	/**
-	 * target element -> the request currently allowed to replace its contents
-	 * aborting alone isn't enough; a response could already have arrived
-	 * so we also check that this is still our request before writing any html
+	 * target -> current request; check ownership before swapping, even after abort
 	 *
 	 * @type {WeakMap<Element, object>}
 	 */
 	const pendingRequests = new WeakMap();
 
 	/**
-	 * turns form fields into a query string or an ordinary POST body
-	 * repeated names stay repeated; files become filenames in this encoding
-	 * multipart forms keep the actual FormData instead, so uploads stay intact
+	 * encode fields for queries or request bodies, keeping repeated names
+	 * files become filenames; multipart forms use FormData instead
 	 *
 	 * @param {FormData} data
 	 * @returns {URLSearchParams}
@@ -1193,7 +1174,7 @@
 		const eventName = isForm ? 'submit' : 'click';
 
 		const handler = event => {
-			// somebody else handled this, or this binding no longer owns the element
+			// skip handled events and disposed bindings
 			if (event.defaultPrevented || !alive) return;
 			if (isForm && event.target !== el) return;
 			// ctrl-click, downloads, new tabs etc still belong to the browser
@@ -1201,7 +1182,7 @@
 				event.shiftKey || event.altKey || el.hasAttribute('download') ||
 				(el.tagName === 'A' && el.target && el.target !== '_self'))) return;
 			event.preventDefault();
-			// clicking "save" three times while busy still sends just one POST
+			// ignore clicks while busy
 			if (!current) send(event);
 		};
 
@@ -1219,8 +1200,7 @@
 				response: null, error: null, aborted: false, canceled: false,
 			};
 			const emit = (name, cancelable = false) => {
-				// our button might have been INSIDE the html we just replaced
-				// bubble from the surviving target then, so the component still hears
+				// if the swap removed the requester, bubble from the target
 				return (replacedSource ? target : el).dispatchEvent(new CustomEvent(name, {
 					detail, bubbles: true, cancelable,
 				}));
@@ -1238,9 +1218,7 @@
 				current = null;
 				emit('stab:complete');
 			};
-			// finish NOW when removed, not whenever fetch eventually rejects
-			// otherwise a quick unmount/remount could let this old request clear
-			// the new one's aria-busy, or fire complete into its fresh handlers
+			// finish before remount can reuse aria-busy or completion handlers
 			request.cancel = () => {
 				detail.aborted = true;
 				controller.abort();
@@ -1269,8 +1247,7 @@
 					signal: controller.signal,
 				};
 				if (isForm) {
-					// the browser knows which fields count, including the submit button
-					// GET puts them in the URL; multipart lets the browser set its boundary
+				// include the submit button; let the browser set multipart boundaries
 					const data = new FormData(el, event.submitter || undefined);
 					if (method === 'get') {
 						for (const [name, value] of formParams(data)) url.searchParams.append(name, value);
@@ -1280,8 +1257,7 @@
 				}
 				detail.url = url.href;
 				detail.options = options;
-				// dispatchEvent returns false when a listener calls preventDefault
-				// this is also the moment to add headers or change Fetch options
+				// listeners can cancel or change headers & Fetch options
 				if (!emit('stab:before-request', true)) {
 					detail.canceled = true;
 					return;
@@ -1298,7 +1274,7 @@
 				// headers etc are customizable; cancellation still belongs to us
 				const response = await fetch(detail.url, { ...options, signal: controller.signal });
 				detail.response = response;
-				// fetch resolves for HTTP errors too! "we got a response" isn't success
+				// fetch resolves even for HTTP errors
 				if (!response.ok) throw new Error(`stab: HTTP ${response.status} ${response.statusText}`);
 				const html = response.status === 204 ? null : await response.text();
 				// check again AFTER waiting for the body, not just after the headers
@@ -1308,8 +1284,7 @@
 					return;
 				}
 
-				// a successful swap may remove our own requester; that's completion,
-				// so its cleanup mustn't mistake this for a request to abort
+				// don't let cleanup abort a swap that removes the requester
 				request.finished = true;
 				// 204 means leave it alone; an empty 200 really does mean empty html
 				if (html !== null) target.innerHTML = html;
