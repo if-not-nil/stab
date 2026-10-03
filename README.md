@@ -1,8 +1,8 @@
-**`stab.js**
+**`stab.js`**
 
 a tiny reactive framework, with the goals of being:\
 ~ easy to use\
-~ small enough to undersand 100% of, and then contribute to/maintain\
+~ small enough to understand 100% of, and then contribute to/maintain\
 ~ simple enough to embed\
 ~ balanced enough to give you the 80%
 
