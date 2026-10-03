@@ -1,4 +1,4 @@
-**`stab.js`**
+**`stab.js**
 
 a tiny reactive framework, with the goals of being:\
 ~ easy to use\
