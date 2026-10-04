@@ -2,7 +2,7 @@
 
 a tiny reactive framework, with the goals of being:\
 ~ easy to use\
-~ small enough to undersand 100% of, and then contribute to/maintain\
+~ small enough to understand 100% of, and then contribute to/maintain\
 ~ simple enough to embed\
 ~ balanced enough to give you the 80%
 
@@ -198,6 +198,9 @@ a nested `@data` is its own component,,, it can't see its parent's state
 
 components added later (`innerHTML`, htmx, yr scripts) start by themselves, and removed ones get cleaned up by themselves
 
+new html inside a component gets its directives bound too,,,\
+  , using that component's state and any enclosing loop variables
+
 ---
 
 **directives**
@@ -211,6 +214,8 @@ components added later (`innerHTML`, htmx, yr scripts) start by themselves, and 
 | `@for="item in list"` | repeats a `<template>` per item, or `(item, index) in list` |
 | `@ref="name"` | the element becomes `$refs.name` |
 | `@init="statements"` | runs once on setup |
+| `@get="/url"`, `@post="/url"`, etc | requests html from a server |
+| `@target="#selector"` | where the response goes, or `this` |
 
 **`:<property>`**
 
@@ -273,6 +278,109 @@ so their `$refs` aren't there yet, use `$nextTick`
 
 ---
 
+**HTTP requests**
+
+html can come from a server too
+
+```html
+<div @data>
+  <button @get="/messages" @target="#messages">load messages</button>
+  <main id="messages"></main>
+</div>
+```
+
+~ `@get`, `@post`, `@put`, `@patch`, `@delete` pick the HTTP method\
+~ `@target` is a css selector, or `this` for the element itself\
+~ the response replaces the target's contents
+
+same `stab.js`, same script tag, nothing else to load
+
+URLs and targets are plain strings, not expressions\
+, use exactly one request directive and a target, inside `@data`
+
+returned directives use the target's state, including `@for` variables\
+a returned `@data` makes its own component as usual
+
+**forms**
+
+put the request on a form and it submits instead of clicking
+
+```html
+<div @data>
+  <form @post="/messages" @target="#messages">
+    <input name="message" required>
+    <button name="action" value="send">send</button>
+  </form>
+  <main id="messages"></main>
+</div>
+```
+
+~ named, enabled fields go with it, including the submit button\
+~ GET adds query parameters, keeping any already in the URL\
+~ the other methods send URL-encoded fields\
+~ `enctype="multipart/form-data"` sends files too
+
+native form validation still works\
+request buttons outside a form send no fields
+
+<details>
+<summary>loading, errors & the fiddly bits</summary>
+
+<br>
+
+```html
+<div @data="{ loading: false, error: '' }"
+  on:stab:before-request="loading = true; error = ''"
+  on:stab:error="error = $event.detail.error.message"
+  on:stab:complete="loading = false">
+  <button @get="/messages" @target="#messages" :disabled="loading">load</button>
+  <p @show="loading">loading...</p>
+  <p @show="error" :text-content="error"></p>
+  <main id="messages"></main>
+</div>
+```
+
+| event | when |
+|---|---|
+| `stab:before-request` | before sending, cancel with `$event.preventDefault()` |
+| `stab:success` | after the response's directives are bound |
+| `stab:error` | a network, HTTP or configuration error |
+| `stab:complete` | finished, including cancellation or abort |
+
+they bubble, and `$event.detail` has `url`, `options`, `target`, `response`,
+`error`, `aborted` and `canceled`\
+anything not available yet is `null`
+
+before-request can change `detail.url` or mutate Fetch options, like
+`detail.options.headers['X-CSRF-Token'] = token`\
+stab owns the cancellation signal; everything else keeps the browser's defaults
+
+~ the requester gets `aria-busy="true"`, then its old value back\
+~ clicking it again while busy is ignored\
+~ another requester for the same target wins, the older request gets aborted\
+~ removing or unmounting the requester aborts it too\
+~ disconnected targets never get late responses
+
+an HTTP error leaves the old html alone\
+so does a 204 response; an empty 200 empties the target
+
+events come from the requester\
+if the response removed it, success & complete come from the target instead
+
+> [!NOTE]
+> aborting a request can't undo anything the server already did
+
+> [!WARNING]
+> serve trusted html, just like with `:inner-html`\
+> returned directives run as js; returned script tags don't run
+
+no history, retries, caching or automatic JSON handling yet\
+there are working examples in [demo.html](demo.html#http-get)
+
+</details>
+
+---
+
 **magic names**
 
 available in any expression or statements
@@ -324,6 +432,7 @@ everything is on one global, `Stab`
 |---|---|
 | `Stab.data(name, factory)` | registers a reusable `@data` |
 | `Stab.store(name, object)` | registers shared state as `$store.name`, returns the reactive object |
+| `Stab.directive(name, setup)` | registers a custom `@name` |
 | `Stab.reactive(obj)` | tracks reads and writes on an object |
 | `Stab.effect(fn)` | runs `fn` now and whenever what it read changes, returns a function that stops it |
 | `Stab.watch(getter, callback)` | js version of `$watch` |
@@ -365,6 +474,46 @@ register `Stab.data` and `Stab.store` in `stab:init`, it fires just before mount
 > put the listener script before `stab.js`\
 > a store must be an object or array, there has to be something to track
 
+<details>
+<summary>custom directives</summary>
+
+<br>
+
+register in `stab:init`, or later; existing elements get bound too
+
+```js
+Stab.directive('focus-on-click', ({ el, cleanup }) => {
+  const handler = () => el.focus();
+  el.addEventListener('click', handler);
+  cleanup(() => el.removeEventListener('click', handler));
+});
+```
+
+setup gets `el`, `value`, `evaluate(expression)`, `execute(statements)`,
+`effect(fn)` and `cleanup(fn)`\
+evaluate uses the element's state & magic names\
+setup is untracked; use an effect for reactive reads
+
+cleanup runs when the element or component is disposed\
+duplicate names and built-in names throw
+
+</details>
+
+<details>
+<summary>running the demo</summary>
+
+```sh
+python3 server.py
+```
+
+open [localhost:8765/demo.html](http://localhost:8765/demo.html)\
+no install needed, just python's standard library
+
+the `/demo/` routes are examples, bring yr own backend\
+a different port can be passed, like `python3 server.py 8000`
+
+</details>
+
 ### todo
 
 - [ ] `@if` (add and remove elements, instead of hiding them)
@@ -373,4 +522,4 @@ register `Stab.data` and `Stab.store` in `stab:init`, it fires just before mount
 - [ ] radio buttons and multi-selects in `@model`
 - [ ] looping over objects (maybe dont)
 - [ ] reusing rows in `@for`
-- [ ] figure out fetching stuff
+- [x] fetching html, with `@get`, `@post` etc

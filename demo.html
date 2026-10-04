@@ -5,6 +5,7 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>stab.js demo</title>
+	<link rel="icon" href="data:,">
 	<!-- my css, check it out -->
 	<link rel="stylesheet" href="aux/barkful.css" />
 
@@ -52,6 +53,8 @@
 
 	<h1>stab.js demo</h1>
 	<p>see directives in <code>./README.md</code></p>
+	<p>for the HTTP examples, run <code>python3 server.py</code> and open
+		<a href="http://localhost:8765/demo.html">localhost:8765/demo.html</a></p>
 
 	<!-- ==============================
 			this right here is the our demo
@@ -215,6 +218,38 @@
 
 		<p>shared clicks: <span :text-content="$store.shared.clicks"></span></p>
 		<button on:click="$store.shared.clicks = 0">reset</button>
+	</section>
+
+	<!-- the html in these examples comes from server.py -->
+
+	<section id="http-get" @data="{ count: 0, loading: false, error: '' }"
+		on:stab:before-request="loading = true; error = ''"
+		on:stab:error="error = $event.detail.error.message"
+		on:stab:complete="loading = false">
+		<h1>GET a reactive fragment</h1>
+		<p>the returned button and counter use this component's state</p>
+		<div class="row">
+			<button @get="/demo/fragment" @target="#fragment" :disabled="loading">load fragment</button>
+			<button @get="/demo/error" @target="#fragment" :disabled="loading">try an HTTP error</button>
+		</div>
+		<p @show="loading">loading...</p>
+		<p @show="error" :text-content="error"></p>
+		<div id="fragment"><p>the response appears here</p></div>
+	</section>
+
+
+	<section id="http-post" @data="{ loading: false, error: '' }"
+		on:stab:before-request="loading = true; error = ''"
+		on:stab:error="error = $event.detail.error.message"
+		on:stab:complete="loading = false">
+		<h1>POST a form</h1>
+		<form class="row" @post="/demo/echo" @target="#form-result">
+			<label>message <input name="message" value="hello" required></label>
+			<button name="action" value="send" :disabled="loading">send</button>
+		</form>
+		<p @show="loading">sending...</p>
+		<p @show="error" :text-content="error"></p>
+		<div id="form-result"><p>the server echoes the submitted fields</p></div>
 	</section>
 
 </body>
