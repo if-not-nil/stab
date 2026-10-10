@@ -503,14 +503,14 @@ duplicate names and built-in names throw
 <summary>running the demo</summary>
 
 ```sh
-python3 server.py
+python3 aux/server.py
 ```
 
 open [localhost:8765/demo.html](http://localhost:8765/demo.html)\
 no install needed, just python's standard library
 
 the `/demo/` routes are examples, bring yr own backend\
-a different port can be passed, like `python3 server.py 8000`
+a different port can be passed, like `python3 aux/server.py 8000`
 
 </details>
 
