@@ -982,6 +982,8 @@
 	 * two-way binds a form control to a state path
 	 *
 	 * checkboxes use `checked` (a boolean) and the `change` event
+	 * radios are checked when the state is their `value`, and set it on `change`
+	 * multiselects use an array of the selected options' values and the `input` event
 	 * everything else uses `value` (a string) and the `input` event
 	 *
 	 * ```html
@@ -993,7 +995,6 @@
 	 * ```
 	 *
 	 * TODO: number inputs to come back as numbers
-	 * TODO: radio buttons, multiselects
 	 * TODO: `@model="a + b"` throws, but it also throws in alpine so idk
 	 *
 	 * @param {HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement} el
@@ -1004,21 +1005,36 @@
 	 */
 	function bindModel(el, path, scope, locals) {
 		const isCheckbox = el.type === 'checkbox';
+		const isRadio = el.type === 'radio';
+		const isMultiple = el.type === 'select-multiple'; // what a <select multiple> calls itself
 		const prop = isCheckbox ? 'checked' : 'value';
-		const eventName = isCheckbox ? 'change' : 'input';
+		const eventName = isCheckbox || isRadio ? 'change' : 'input';
 
 		// state -> dom //
 		effect(() => {
 			const value = evaluate(path, scope, locals) ?? ''; // avoid "undefined"
+
+			// every radio in the group runs this, only the matching one ends up checked
+			if (isRadio) el.checked = value === el.value;
+			// reading the array subscribes us to it, so a push or splice reselects too
+			else if (isMultiple) {
+				for (const option of el.options) {
+					option.selected = Array.isArray(value) && value.includes(option.value);
+				}
+			}
 			// skip the write if nothing changed
 			//
 			// assigning to `value` while the user is typing might possibly push the caret to the end of the field
-			if (el[prop] !== value) el[prop] = value;
+			else if (el[prop] !== value) el[prop] = value;
 		});
 
 		// dom -> state //
 		const handler = () => {
-			execute(`${path} = $value`, scope, { ...locals, $value: el[prop] });
+			// radios only fire `change` when they get checked, so their `value` is always the new choice
+			const value = isMultiple
+				? [...el.selectedOptions].map(option => option.value)
+				: el[prop];
+			execute(`${path} = $value`, scope, { ...locals, $value: value });
 		};
 		el.addEventListener(eventName, handler);
 		onCleanup(() => el.removeEventListener(eventName, handler));
