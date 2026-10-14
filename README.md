@@ -258,8 +258,9 @@ an unknown modifier is logged and the listener isn't added\
 
 ~ text inputs, textareas and selects use `value` and `input`\
 ~ checkboxes use `checked` and `change`\
-~ values are always strings, even for `type="number"`\
-~ no radio buttons or multi-selects yet
+~ radios are checked when the state equals their `value`, and set it on `change`\
+~ `<select multiple>` uses an array of the selected values\
+~ values are always strings, even for `type="number"`, so give radios string state too
 
 **`@for`**
 
@@ -519,7 +520,7 @@ a different port can be passed, like `python3 aux/server.py 8000`
 - [ ] `@if` (add and remove elements, instead of hiding them)
 - [ ] binding html attributes, like `data-*` or `aria-*`
 - [ ] key modifiers like `on:keydown.enter` (maybe dont, check `$event.key`)
-- [ ] radio buttons and multi-selects in `@model`
 - [ ] looping over objects (maybe dont)
 - [ ] reusing rows in `@for`
+- [x] radio buttons and multi-selects in `@model`
 - [x] fetching html, with `@get`, `@post` etc
