@@ -79,7 +79,7 @@
 	</section>
 
 
-	<section @data="{ name: 'world', agreed: false }">
+	<section @data="{ name: 'world', agreed: false, size: 'medium', toppings: ['cheese'] }">
 		<h1>one more</h1>
 
 		<p>hello,
@@ -96,6 +96,26 @@
 			<input type="checkbox" @model="agreed"> agreed:
 			<span :text-content="agreed"></span>
 		</label>
+
+		<!-- radios share one path, each one sets it to its own value -->
+		<div class="row">
+			<label><input type="radio" name="size" value="small" @model="size"> small</label>
+			<label><input type="radio" name="size" value="medium" @model="size"> medium</label>
+			<label><input type="radio" name="size" value="large" @model="size"> large</label>
+			<button on:click="size = 'large'">go large</button>
+		</div>
+		<p>size: <span :text-content="size"></span></p>
+
+		<!-- a multiselect gives you an array -->
+		<div class="row">
+			<select multiple size="3" @model="toppings">
+				<option value="cheese">cheese</option>
+				<option value="olives">olives</option>
+				<option value="basil">basil</option>
+			</select>
+			<button on:click="toppings = []">clear</button>
+		</div>
+		<p>toppings: <span :text-content="toppings.join(', ') || 'none'"></span></p>
 	</section>
 
 
