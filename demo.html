@@ -53,7 +53,7 @@
 
 	<h1>stab.js demo</h1>
 	<p>see directives in <code>./README.md</code></p>
-	<p>for the HTTP examples, run <code>python3 server.py</code> and open
+	<p>for the HTTP examples, run <code>python3 aux/server.py</code> and open
 		<a href="http://localhost:8765/demo.html">localhost:8765/demo.html</a></p>
 
 	<!-- ==============================
@@ -220,7 +220,7 @@
 		<button on:click="$store.shared.clicks = 0">reset</button>
 	</section>
 
-	<!-- the html in these examples comes from server.py -->
+	<!-- the html in these examples comes from aux/server.py -->
 
 	<section id="http-get" @data="{ count: 0, loading: false, error: '' }"
 		on:stab:before-request="loading = true; error = ''"

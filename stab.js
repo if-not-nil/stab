@@ -395,7 +395,7 @@
 	 * this is the part where we make it evaluate expressions
 	 * we get:
 	 *   <button on:click="count++">
-	 *   <span :text="count">
+	 *   <span :text-content="count">
 	 *
 	 * html gives us strings. but if you look at these strings, count it there, but not anywhere in the js!
 	 * it is instead a state object. we need to treat `count` as `state.count`
@@ -492,7 +492,7 @@
 	 *
 	 *   <div @data="{ count: 0, open: true }">
 	 *     <button on:click="count++">Add</button>
-	 *     <span :textContent="count"></span>
+	 *     <span :text-content="count"></span>
 	 *     <p @show="open">Hello</p>
 	 *     <button :disabled="count >= 3" on:click="open = !open">Toggle</button>
 	 *   </div>
@@ -502,7 +502,7 @@
 
 	/** @type {Record<string, 'prop' | 'on' | 'special'>} */
 	const PREFIXES = {
-		':': 'prop',      // :textContent -> set a dom property
+		':': 'prop',      // :text-content -> set a dom property
 		'on:': 'on',       // on:click      -> add an event listener
 		'@': 'special',    // @show         -> built-in directives
 	};
@@ -1376,7 +1376,7 @@
 	 *     Stab.data('counter', () => ({ count: 0 }));
 	 *   });
 	 *
-	 * ````
+	 *   ```
 	 * @returns {void}
 	 */
 	function start() {

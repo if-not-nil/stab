@@ -25,7 +25,7 @@ class Handler(SimpleHTTPRequestHandler):
             case '/demo/fragment':
                 self.respond(200, """
                  <div class="row">
-                    <button on:click="count++">fragment add</button>'
+                    <button on:click="count++">fragment add</button>
                     <span :text-content="count"></span>
                  </div>
                  """)
