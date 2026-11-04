@@ -984,6 +984,7 @@
 	 * checkboxes use `checked` (a boolean) and the `change` event
 	 * radios are checked when the state is their `value`, and set it on `change`
 	 * multiselects use an array of the selected options' values and the `input` event
+	 * number and range inputs use `valueAsNumber` (`null` when empty or invalid) and the `input` event
 	 * everything else uses `value` (a string) and the `input` event
 	 *
 	 * ```html
@@ -994,7 +995,6 @@
 	 * </div>
 	 * ```
 	 *
-	 * TODO: number inputs to come back as numbers
 	 * TODO: `@model="a + b"` throws, but it also throws in alpine so idk
 	 *
 	 * @param {HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement} el
@@ -1007,7 +1007,10 @@
 		const isCheckbox = el.type === 'checkbox';
 		const isRadio = el.type === 'radio';
 		const isMultiple = el.type === 'select-multiple'; // what a <select multiple> calls itself
+		const isNumber = el.type === 'number' || el.type === 'range';
 		const prop = isCheckbox ? 'checked' : 'value';
+		// half-typed input like "-" reads as NaN; call that null
+		const readNumber = () => Number.isNaN(el.valueAsNumber) ? null : el.valueAsNumber;
 		const eventName = isCheckbox || isRadio ? 'change' : 'input';
 
 		// state -> dom //
@@ -1022,6 +1025,10 @@
 					option.selected = Array.isArray(value) && value.includes(option.value);
 				}
 			}
+			// compare as numbers, so "1.0" or a half-typed "-" isn't overwritten while typing
+			else if (isNumber) {
+				if ((readNumber() ?? '') !== value) el.value = value;
+			}
 			// skip the write if nothing changed
 			//
 			// assigning to `value` while the user is typing might possibly push the caret to the end of the field
@@ -1033,7 +1040,7 @@
 			// radios only fire `change` when they get checked, so their `value` is always the new choice
 			const value = isMultiple
 				? [...el.selectedOptions].map(option => option.value)
-				: el[prop];
+				: isNumber ? readNumber() : el[prop];
 			execute(`${path} = $value`, scope, { ...locals, $value: value });
 		};
 		el.addEventListener(eventName, handler);
