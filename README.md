@@ -260,7 +260,8 @@ an unknown modifier is logged and the listener isn't added\
 ~ checkboxes use `checked` and `change`\
 ~ radios are checked when the state equals their `value`, and set it on `change`\
 ~ `<select multiple>` uses an array of the selected values\
-~ values are always strings, even for `type="number"`, so give radios string state too
+~ `type="number"` and `type="range"` give numbers, or `null` while the field is empty or invalid\
+~ every other value is a string, so give radios string state too
 
 **`@for`**
 
